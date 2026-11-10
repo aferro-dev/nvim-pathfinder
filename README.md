@@ -2,7 +2,7 @@
 
 A full-screen, two-dimensional file tree for Neovim 0.11+. Each directory appears once, connected directly to its children in the next column. The map is centered horizontally and vertically and adjusts as branches expand or the terminal resizes.
 
-Directories, selection, and shortcut labels use rounded capsules with Nerd Font glyphs. Thin lines connect the nodes, while a dedicated dark blue-violet palette provides subtle directory backgrounds and a lilac selection accent. Folder icons use soft blue; file icons use lavender gray. Glyphs come from `mini.icons` or `nvim-web-devicons`, with built-in fallbacks.
+Directories, selection, and shortcut labels use rounded capsules with Nerd Font glyphs. Colors follow your Neovim colorscheme: surfaces, selection, borders, and shortcut labels link to standard highlight groups. Rounded caps derive their colors from those surfaces and update when the colorscheme changes. Icon glyphs and colors come from `mini.icons` or `nvim-web-devicons`, with built-in fallbacks. You can customize the `Pathfinder*` highlight groups in your Neovim configuration.
 
 Pathfinder replaces netrw: it opens with `nvim`, `nvim .`, `nvim /path/to/directory`, and when you open a directory with `:edit`. `:Explore` also opens Pathfinder. Starting Neovim with a file opens that file normally. To disable this integration, call `setup({ default_explorer = false })` before plugins load.
 
@@ -19,6 +19,9 @@ Pathfinder replaces netrw: it opens with `nvim`, `nvim .`, `nvim /path/to/direct
 | `zo` / `zc` | Expand / collapse node |
 | `zR` / `zM` | Expand all nodes / collapse all nodes |
 | `Backspace`, `-` | Select parent |
+| `a` | Create file or directory |
+| `d` | Delete file or directory after confirmation |
+| `I` | Toggle Git-ignored files |
 | `R` | Refresh tree, preserving expanded nodes |
 | `q`, `Esc`, `Ctrl-P` | Close Pathfinder and return to the original window |
 
@@ -26,7 +29,13 @@ Pathfinder replaces netrw: it opens with `nvim`, `nvim .`, `nvim /path/to/direct
 
 The root path appears in the top bar, with shortcuts along the bottom frame. Long names are shortened, and the viewport follows the selected node. Movements support counts such as `3j` and stop at the boundaries.
 
-Hidden files are visible; `.git` is excluded. Directories load when expanded and appear before files, sorted by name. Symbolic links remain leaf nodes to prevent cycles. Pathfinder focuses on navigation and does not provide file modification actions or Git status indicators.
+Hidden files and Git-ignored files are visible by default; `.git` is always excluded by the default name filter. Press `I` to hide or show Git-ignored entries. The footer displays `ignored: hidden` or `ignored: shown`. Set `gitignore = true` in `setup()` to start with ignored entries hidden. The filter uses Git itself, including nested ignore files, negation rules, repository excludes, and global excludes; tracked files remain visible. Git must be installed for this filter. `R` reloads the ignore rules after edits. Directories load when expanded and appear before files, sorted by name. Symbolic links remain leaf nodes to prevent cycles. Git status indicators are not included.
+
+## File actions
+
+Press `a` to create an entry inside the selected directory, or alongside the selected file. Enter a relative name such as `new-file.lua`, `nested/new-file.lua`, or `new-directory/`. A trailing `/` creates a directory; missing parent directories are created automatically. Existing entries are never overwritten. The map refreshes and selects the new entry.
+
+Press `d` to delete the selected entry. Choose **Delete** to confirm; **Cancel** leaves it unchanged. Deleting a directory permanently removes its contents. Deleting a symbolic link removes the link only. Deletion is blocked if the entry or any descendant has a buffer with unsaved changes. The repository root cannot be deleted.
 
 ## Lua installation
 
@@ -72,5 +81,7 @@ For local development, use an absolute source path accessible to the build proce
 ```sh
 nvim --headless -u NONE -l tests/smoke.lua
 nvim --headless -u NONE -l tests/grid.lua
+nvim --headless -u NONE -l tests/actions.lua
+nvim --headless -u NONE -l tests/gitignore.lua
 python3 tests/startup.py
 ```

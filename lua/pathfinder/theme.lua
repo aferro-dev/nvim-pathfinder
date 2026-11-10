@@ -1,27 +1,37 @@
 local M = {}
 
--- A quiet, self-contained palette: never change the editor's colorscheme.
+-- Link to the user's highlights; only rounded caps need derived colors.
 function M.apply()
-  local bg = '#101019'
-  local groups = {
-    PathfinderNormal = { fg = '#dedce9', bg = bg },
-    PathfinderDirectory = { fg = '#d3d1e4', bg = '#1b1b2b' },
-    PathfinderAncestor = { fg = '#eeebfa', bg = '#303047' },
-    PathfinderSelected = { fg = '#211a32', bg = '#bba3eb', bold = true },
-    PathfinderDirectoryEdge = { fg = '#1b1b2b', bg = bg },
-    PathfinderAncestorEdge = { fg = '#303047', bg = bg },
-    PathfinderSelectedEdge = { fg = '#bba3eb', bg = bg },
-    PathfinderBadge = { fg = '#211a32', bg = '#bba3eb', bold = true },
-    PathfinderConnector = { fg = '#9280b9', bg = bg },
-    PathfinderBorder = { fg = '#65557f', bg = bg },
-    PathfinderKey = { fg = '#cfcae4', bg = '#262438' },
-    PathfinderKeyEdge = { fg = '#262438', bg = bg },
-    PathfinderMuted = { fg = '#9c96b8', bg = bg },
-    PathfinderFolderIcon = { fg = '#8fb9ed' },
-    PathfinderFileIcon = { fg = '#a6a2bb' },
-    PathfinderSelectedIcon = { fg = '#302143', bg = '#bba3eb' },
+  local links = {
+    PathfinderNormal = 'NormalFloat',
+    PathfinderDirectory = 'Pmenu',
+    PathfinderAncestor = 'CursorLine',
+    PathfinderSelected = 'PmenuSel',
+    PathfinderBadge = 'PmenuSel',
+    PathfinderConnector = 'NonText',
+    PathfinderBorder = 'FloatBorder',
+    PathfinderMuted = 'Comment',
+    PathfinderKey = 'StatusLine',
   }
-  for name, definition in pairs(groups) do vim.api.nvim_set_hl(0, name, definition) end
+  for name, target in pairs(links) do
+    vim.api.nvim_set_hl(0, name, { default = true, link = target })
+  end
+  local normal = vim.api.nvim_get_hl(0, { name = 'Normal', link = false })
+  local canvas = vim.api.nvim_get_hl(0, { name = 'PathfinderNormal', link = false })
+  for name, surface in pairs({
+    PathfinderDirectoryEdge = 'PathfinderDirectory',
+    PathfinderAncestorEdge = 'PathfinderAncestor',
+    PathfinderSelectedEdge = 'PathfinderSelected',
+    PathfinderKeyEdge = 'PathfinderKey',
+  }) do
+    local hl = vim.api.nvim_get_hl(0, { name = surface, link = false })
+    vim.api.nvim_set_hl(0, name, {
+      fg = hl.bg or canvas.bg or normal.bg,
+      bg = canvas.bg or normal.bg,
+      ctermfg = hl.ctermbg or canvas.ctermbg or normal.ctermbg,
+      ctermbg = canvas.ctermbg or normal.ctermbg,
+    })
+  end
 end
 
 return M

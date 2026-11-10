@@ -1,9 +1,22 @@
 local M = {}
 local api = vim.api
 local uv = vim.uv
-local config = { hidden = true, ignored = { '.git' }, default_explorer = true }
+local config = { hidden = true, ignored = { '.git' }, default_explorer = true, gitignore = false }
 local state
 local ns = api.nvim_create_namespace('pathfinder')
+
+local function update_gitignore()
+  state.git_ignored = {}
+  if not config.gitignore or vim.fn.executable('git') ~= 1 then return end
+  local result = vim.system({ 'git', '-C', state.root.path, 'ls-files',
+    '--others', '--ignored', '--exclude-standard', '--directory', '-z', '--', '.' },
+    { text = false }):wait(5000)
+  if result.code ~= 0 then return end -- Non-Git directories remain usable.
+  for entry in (result.stdout or ''):gmatch('[^%z]+') do
+    local path = vim.fs.normalize(vim.fs.joinpath(state.root.path, entry)):gsub('/$', '')
+    state.git_ignored[path] = true
+  end
+end
 
 local function children(node)
   if node.children then return node.children end
@@ -18,8 +31,10 @@ local function children(node)
     if not name then break end
     if not vim.tbl_contains(config.ignored, name) and (config.hidden or name:sub(1, 1) ~= '.') then
       local path = vim.fs.joinpath(node.path, name)
-      -- Symlink directories remain leaves: traversal never follows a cycle.
-      table.insert(node.children, { name = name, path = path, dir = kind == 'directory', open = false, parent = node })
+      if not (config.gitignore and state.git_ignored and state.git_ignored[path]) then
+        -- Symlink directories remain leaves: traversal never follows a cycle.
+        table.insert(node.children, { name = name, path = path, dir = kind == 'directory', open = false, parent = node })
+      end
     end
   end
   table.sort(node.children, function(a, b)
@@ -181,7 +196,7 @@ local function render(target)
         if node.glyph ~= '' and node.icon_hl then
           local icon_start = node.cursor_col + #(node.dir and (node.open and '⌄ ' or '› ') or '  ')
           marks[#marks + 1] = { screen_row - 1, icon_start, icon_start + #node.glyph,
-            node == selected and 'PathfinderSelectedIcon' or node.dir and 'PathfinderFolderIcon' or 'PathfinderFileIcon' }
+            node.icon_hl }
         end
       end
       if depth < #s.columns then
@@ -320,12 +335,18 @@ function M.parent()
   if node and node.parent then render(node.parent.path) end
 end
 
-function M.refresh()
-  local node = current()
-  if not node then return end
-  local path = node.path
+local function reload(path, reveal)
+  update_gitignore()
   local opened = {}
   for name, entry in pairs(state.nodes) do if entry.open then opened[name] = true end end
+  if reveal then
+    local parent = vim.fs.dirname(path)
+    while parent and (parent == state.root.path or vim.fs.relpath(state.root.path, parent)) do
+      opened[parent] = true
+      if parent == state.root.path then break end
+      parent = vim.fs.dirname(parent)
+    end
+  end
   state.root.children = nil
   local function restore(node)
     node.open = opened[node.path] or node == state.root
@@ -333,7 +354,84 @@ function M.refresh()
   end
   restore(state.root)
   index_map()
+  while path ~= state.root.path and not state.nodes[path] do path = vim.fs.dirname(path) end
   render(path)
+end
+
+function M.refresh()
+  local node = current()
+  if node then reload(node.path) end
+end
+
+local function action_error(message)
+  vim.notify('Pathfinder: ' .. message, vim.log.levels.ERROR)
+end
+
+function M.create()
+  local node = current()
+  if not node then return end
+  local session = state
+  local base = node.dir and node.path or node.parent.path
+  vim.ui.input({ prompt = 'Create in ' .. base .. ' (end with / for a directory): ' }, function(name)
+    if state ~= session or not name or name == '' then return end
+    local directory = name:sub(-1) == '/'
+    local path = vim.fs.normalize(vim.fs.joinpath(base, name))
+    if name:sub(1, 1) == '/' or name:find('%c') or path == base or not vim.fs.relpath(base, path) then
+      action_error('Enter a relative path inside the selected directory')
+      return
+    end
+    if uv.fs_lstat(path) then action_error('Already exists: ' .. path); return end
+    local parent = vim.fs.dirname(path)
+    local ancestor = parent
+    while not uv.fs_lstat(ancestor) and ancestor ~= vim.fs.dirname(ancestor) do ancestor = vim.fs.dirname(ancestor) end
+    local real_base, real_ancestor = uv.fs_realpath(base), uv.fs_realpath(ancestor)
+    if not real_base or not real_ancestor or (real_ancestor ~= real_base and not vim.fs.relpath(real_base, real_ancestor)) then
+      action_error('The destination resolves outside the selected directory')
+      return
+    end
+    local ok, err = pcall(vim.fn.mkdir, directory and path or parent, 'p')
+    if not ok then action_error(tostring(err)); return end
+    if not directory then
+      local fd, open_err = uv.fs_open(path, 'wx', 420)
+      if not fd then action_error(tostring(open_err)); return end
+      uv.fs_close(fd)
+    elseif not uv.fs_stat(path) then
+      action_error('Could not create directory: ' .. path)
+      return
+    end
+    reload(path, true)
+  end)
+end
+
+function M.delete()
+  local node = current()
+  if not node or node == state.root then return end
+  local session = state
+  local path, parent = node.path, node.parent.path
+  local prompt = 'Delete ' .. path .. (node.dir and ' and all its contents?' or '?')
+  vim.ui.select({ 'Cancel', 'Delete' }, { prompt = prompt }, function(choice)
+    if state ~= session or choice ~= 'Delete' then return end
+    local buffers = {}
+    for _, buf in ipairs(api.nvim_list_bufs()) do
+      local name = api.nvim_buf_get_name(buf)
+      if name == path or (node.dir and vim.fs.relpath(path, name)) then
+        if vim.bo[buf].modified then
+          action_error('Save or discard unsaved changes before deleting: ' .. name)
+          return
+        end
+        buffers[#buffers + 1] = buf
+      end
+    end
+    -- Recheck the type: a directory replaced by a symlink is unlinked, not traversed.
+    local stat = uv.fs_lstat(path)
+    if not stat then action_error('No longer exists: ' .. path); return end
+    local ok, result = pcall(vim.fn.delete, path, stat.type == 'directory' and 'rf' or '')
+    if not ok or result ~= 0 then action_error('Could not delete: ' .. path); return end
+    for _, buf in ipairs(buffers) do
+      if api.nvim_buf_is_valid(buf) then pcall(api.nvim_buf_delete, buf, {}) end
+    end
+    reload(parent)
+  end)
 end
 
 local function dimensions()
@@ -341,7 +439,8 @@ local function dimensions()
   for _, action in ipairs({
     { 'h/l', 'columns' }, { 'j/k', 'nodes' }, { 'Space', 'toggle' },
     { 'zo/zc', 'expand/collapse' }, { 'zR/zM', 'expand/collapse all' },
-    { '↵', 'open' }, { 'R', 'refresh' }, { 'q', 'close' },
+    { '↵', 'open' }, { 'a', 'create' }, { 'd', 'delete' },
+    { 'I', config.gitignore and 'ignored: hidden' or 'ignored: shown' }, { 'R', 'refresh' }, { 'q', 'close' },
   }) do
     footer[#footer + 1] = { '', 'PathfinderKeyEdge' }
     footer[#footer + 1] = { action[1], 'PathfinderKey' }
@@ -351,6 +450,14 @@ local function dimensions()
   return { relative = 'editor', row = 0, col = 0, width = math.max(1, vim.o.columns - 2),
     height = math.max(1, vim.o.lines - vim.o.cmdheight - 2), style = 'minimal',
     border = 'rounded', zindex = 50, footer = footer, footer_pos = 'center' }
+end
+
+function M.toggle_gitignore()
+  local node = current()
+  if not node then return end
+  config.gitignore = not config.gitignore
+  reload(node.path)
+  api.nvim_win_set_config(state.win, dimensions())
 end
 
 function M.open(opts)
@@ -398,6 +505,7 @@ function M.open(opts)
     zo = function() M.set_expanded(true) end,
     zc = function() M.set_expanded(false) end,
     zR = M.expand_all, zM = M.collapse_all,
+    a = M.create, d = M.delete, I = M.toggle_gitignore,
 
   }
   local descriptions = {
@@ -409,6 +517,7 @@ function M.open(opts)
     q = 'Close Pathfinder', ['<Esc>'] = 'Close Pathfinder', ['<C-p>'] = 'Close Pathfinder',
     R = 'Refresh tree', zo = 'Expand node', zc = 'Collapse node',
     zR = 'Expand all nodes', zM = 'Collapse all nodes',
+    a = 'Create file or directory', d = 'Delete file or directory', I = 'Toggle Git-ignored files',
   }
   for key, action in pairs(maps) do
     vim.keymap.set('n', key, action, { buffer = buf, silent = true, nowait = true, desc = descriptions[key] })
@@ -423,6 +532,7 @@ function M.open(opts)
   api.nvim_create_autocmd('BufWipeout', { buffer = buf, once = true, callback = function()
     if state and state.buf == buf then state = nil end
   end })
+  update_gitignore()
   local node = state.root
   local relative = vim.fs.relpath(root, file)
   if relative then

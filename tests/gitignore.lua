@@ -1,0 +1,58 @@
+vim.opt.runtimepath:prepend(vim.fn.getcwd())
+local p = require('pathfinder')
+local root = vim.fn.tempname()
+vim.fn.mkdir(root .. '/build', 'p')
+vim.fn.mkdir(root .. '/nested', 'p')
+local function git(...)
+  local args = { 'git', '-C', root }
+  vim.list_extend(args, { ... })
+  local result = vim.system(args):wait()
+  assert(result.code == 0, result.stderr)
+end
+git('init', '-q')
+vim.fn.writefile({ '*.log', '!important.log', 'build/' }, root .. '/.gitignore')
+for _, file in ipairs({ 'keep.txt', 'debug.log', 'important.log', 'tracked.log', 'build/cache', 'nested/hidden.log', 'nested/visible.txt' }) do
+  vim.fn.writefile({}, root .. '/' .. file)
+end
+git('add', '-f', 'tracked.log')
+local function text() return table.concat(vim.api.nvim_buf_get_lines(0, 0, -1, false), '\n') end
+vim.cmd.edit(root .. '/keep.txt')
+p.open({ root = root }); p.expand_all()
+assert(text():find('debug.log', 1, true) and text():find('cache', 1, true))
+p.toggle_gitignore()
+assert(not text():find('debug.log', 1, true))
+assert(not text():find('build/', 1, true))
+assert(not text():find('hidden.log', 1, true))
+assert(text():find('tracked.log', 1, true)) -- tracked files are not hidden
+assert(text():find('important.log', 1, true)) -- negation is respected
+p.toggle_gitignore(); p.expand_all()
+assert(text():find('debug.log', 1, true) and text():find('cache', 1, true))
+p.close()
+-- A hidden selection falls back to a visible ancestor.
+vim.cmd.edit(root .. '/nested/hidden.log')
+p.open({ root = root }); p.toggle_gitignore()
+assert(not text():find('hidden.log', 1, true))
+assert(vim.api.nvim_get_current_line():find('nested/', 1, true))
+p.close()
+-- Explicit roots inside a repository use paths relative to that directory.
+p.open({ root = root .. '/nested' })
+assert(not text():find('hidden.log', 1, true))
+assert(text():find('visible.txt', 1, true))
+p.toggle_gitignore()
+assert(text():find('hidden.log', 1, true))
+p.toggle_gitignore()
+vim.fn.writefile({ '*.log', '!important.log', 'build/', 'visible.txt' }, root .. '/.gitignore')
+p.refresh()
+assert(not text():find('visible.txt', 1, true))
+p.close()
+-- The toggle also works outside a Git repository.
+local outside = vim.fn.tempname()
+vim.fn.mkdir(outside, 'p')
+vim.fn.writefile({}, outside .. '/file.txt')
+p.open({ root = outside }); p.toggle_gitignore()
+assert(text():find('file.txt', 1, true))
+p.close()
+vim.fn.delete(root, 'rf')
+vim.fn.delete(outside, 'rf')
+print('Gitignore toggle passed')
+vim.cmd('qa!')

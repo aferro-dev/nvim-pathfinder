@@ -17,12 +17,13 @@ local function has(name)
 end
 local function contents() return table.concat(vim.api.nvim_buf_get_lines(0, 0, -1, false), '\n') end
 has('seed-food.ts')
+p.horizontal(1); has('seed-food.ts') -- right on a file stays on that file
 assert(not contents():find('index.ts', 1, true)) -- src starts collapsed
 local original_col = vim.api.nvim_win_get_cursor(0)[2]
 p.parent(); has('scripts/')
 assert(vim.api.nvim_win_get_cursor(0)[2] < original_col)
 p.vertical(1); has('src/')
-p.set_expanded(true); has('app/')
+p.horizontal(1); has('app/') -- right expands a collapsed directory and enters it
 p.parent(); has('src/')
 local map = contents()
 -- On a roomy terminal, both axes center the map rather than pinning it top-left.

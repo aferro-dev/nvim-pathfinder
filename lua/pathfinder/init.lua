@@ -264,14 +264,21 @@ function M.horizontal(delta)
   if not node then return end
   local row = node.map_row
   for _ = 1, vim.v.count1 do
-    local column = state.columns[node.depth + delta]
-    if not column then break end
-    local target, distance
-    for _, candidate in ipairs(column) do
-      local d = math.abs(candidate.map_row - row)
-      if not distance or d < distance then target, distance = candidate, d end
+    if delta > 0 then
+      if not node.dir then break end
+      node.open = true
+      index_map()
+      node = children(node)[1] or node
+    else
+      local column = state.columns[node.depth + delta]
+      if not column then break end
+      local target, distance
+      for _, candidate in ipairs(column) do
+        local d = math.abs(candidate.map_row - row)
+        if not distance or d < distance then target, distance = candidate, d end
+      end
+      node = target
     end
-    node = target
   end
   render(node.path)
 end
@@ -437,7 +444,7 @@ end
 local function dimensions()
   local footer = {}
   for _, action in ipairs({
-    { 'h/l', 'columns' }, { 'j/k', 'nodes' }, { 'Space', 'toggle' },
+    { 'h', 'previous column' }, { 'l', 'expand/enter' }, { 'j/k', 'nodes' }, { 'Space', 'toggle' },
     { 'zo/zc', 'expand/collapse' }, { 'zR/zM', 'expand/collapse all' },
     { '↵', 'open' }, { 'a', 'create' }, { 'd', 'delete' },
     { 'I', config.gitignore and 'ignored: hidden' or 'ignored: shown' }, { 'R', 'refresh' }, { 'q', 'close' },
@@ -509,9 +516,9 @@ function M.open(opts)
 
   }
   local descriptions = {
-    j = 'Next node', k = 'Previous node', h = 'Previous column', l = 'Next column',
+    j = 'Next node', k = 'Previous node', h = 'Previous column', l = 'Expand directory and select first child',
     ['<Down>'] = 'Next node', ['<Up>'] = 'Previous node',
-    ['<Left>'] = 'Previous column', ['<Right>'] = 'Next column',
+    ['<Left>'] = 'Previous column', ['<Right>'] = 'Expand directory and select first child',
     ['<CR>'] = 'Open file or toggle directory', ['<Space>'] = 'Toggle directory',
     ['<BS>'] = 'Select parent', ['-'] = 'Select parent',
     q = 'Close Pathfinder', ['<Esc>'] = 'Close Pathfinder', ['<C-p>'] = 'Close Pathfinder',

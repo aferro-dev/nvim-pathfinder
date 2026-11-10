@@ -13,7 +13,8 @@ Pathfinder replaces netrw: it opens with `nvim`, `nvim .`, `nvim /path/to/direct
 | Key | Action |
 | --- | --- |
 | `j/k`, `↓/↑` | Next/previous node; expand the adjacent branch to keep depth, or move up when needed |
-| `h/l`, `←/→` | Previous/next column, selecting the nearest node vertically |
+| `h`, `←` | Previous column, selecting the nearest node vertically |
+| `l`, `→` | Expand the selected directory and enter its first child; files stay selected |
 | `Enter` | Open file or toggle directory; expanding selects the first child |
 | `Space` | Toggle directory; expanding selects the first child |
 | `zo` / `zc` | Expand / collapse node |

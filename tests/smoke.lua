@@ -25,12 +25,14 @@ p.vertical(-1); has('errors/')
 p.vertical(1); has('middlewares/')
 p.horizontal(-1); has('auxiliary/')
 p.vertical(-1); has('auth/')
-p.horizontal(1); has('errors/') -- closest visible cell belongs to auxiliary
+p.vertical(1); has('auxiliary/')
+p.horizontal(1); has('errors/') -- enter the selected directory directly
 p.vertical(1); has('middlewares/')
 p.vertical(1); has('dal.ts')
 p.vertical(1); has('chart-series/') -- empty next branch falls back to its directory
 p.vertical(-1); has('auxiliary/') -- now navigating at the shallower depth
-p.horizontal(1); has('middlewares/')
+p.horizontal(1); has('errors/')
+p.vertical(1); has('middlewares/')
 p.vertical(1); has('dal.ts')
 p.horizontal(-1); has('auxiliary/') -- centered parent is the nearest node
 p.parent(); has('app/')

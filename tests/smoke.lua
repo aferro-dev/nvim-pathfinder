@@ -1,0 +1,48 @@
+vim.opt.runtimepath:prepend(vim.fn.getcwd())
+vim.cmd('runtime plugin/pathfinder.lua')
+local root = vim.fn.tempname()
+vim.fn.mkdir(root .. '/app/auth/errors', 'p')
+vim.fn.mkdir(root .. '/app/auxiliary/errors', 'p')
+vim.fn.mkdir(root .. '/app/auxiliary/middlewares', 'p')
+vim.fn.mkdir(root .. '/app/chart-series', 'p')
+vim.fn.writefile({ 'auth' }, root .. '/app/auth/dal.ts')
+vim.fn.writefile({ 'auxiliary' }, root .. '/app/auxiliary/dal.ts')
+local file = root .. '/app/auxiliary/dal.ts'
+vim.cmd.edit(file)
+vim.api.nvim_buf_set_lines(0, 0, -1, false, { 'unsaved' })
+local origin = vim.api.nvim_get_current_buf()
+local p = require('pathfinder')
+local function line()
+  local col = vim.api.nvim_win_get_cursor(0)[2]
+  return vim.split(vim.api.nvim_get_current_line():sub(col + 1), '│', { plain = true })[1]
+end
+local function has(s) assert(line():find(s, 1, true), line() .. ' expected ' .. s) end
+p.open({ root = root })
+has('dal.ts')
+assert(vim.api.nvim_win_get_width(0) == vim.o.columns - 2)
+p.vertical(-1); has('middlewares/')
+p.vertical(-1); has('errors/')
+p.vertical(1); has('middlewares/')
+p.horizontal(-1); has('auxiliary/')
+p.vertical(-1); has('auth/')
+p.horizontal(1); has('errors/') -- closest visible cell belongs to auxiliary
+p.vertical(1); has('middlewares/')
+p.vertical(1); has('dal.ts')
+p.vertical(1); has('chart-series/') -- empty next branch falls back to its directory
+p.vertical(-1); has('auxiliary/') -- now navigating at the shallower depth
+p.horizontal(1); has('middlewares/')
+p.vertical(1); has('dal.ts')
+p.horizontal(-1); has('auxiliary/') -- centered parent is the nearest node
+p.parent(); has('app/')
+p.close()
+assert(vim.api.nvim_get_current_buf() == origin)
+assert(vim.api.nvim_get_current_line() == 'unsaved')
+p.open({ root = root }); has('dal.ts')
+p.refresh(); has('dal.ts')
+p.activate()
+assert(vim.api.nvim_get_current_buf() == origin)
+assert(vim.bo.modified)
+p.open({ root = root }); p.close()
+vim.fn.delete(root, 'rf')
+print('Pathfinder smoke tests passed')
+vim.cmd('qa!')

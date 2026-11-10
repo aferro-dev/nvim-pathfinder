@@ -1,7 +1,7 @@
 local M = {}
 local api = vim.api
 local uv = vim.uv
-local config = { hidden = true, ignored = { '.git' } }
+local config = { hidden = true, ignored = { '.git' }, default_explorer = true }
 local state
 local ns = api.nvim_create_namespace('pathfinder')
 
@@ -19,7 +19,7 @@ local function children(node)
     if not vim.tbl_contains(config.ignored, name) and (config.hidden or name:sub(1, 1) ~= '.') then
       local path = vim.fs.joinpath(node.path, name)
       -- Symlink directories remain leaves: traversal never follows a cycle.
-      table.insert(node.children, { name = name, path = path, dir = kind == 'directory', parent = node })
+      table.insert(node.children, { name = name, path = path, dir = kind == 'directory', open = false, parent = node })
     end
   end
   table.sort(node.children, function(a, b)
@@ -31,52 +31,177 @@ end
 
 local function current()
   if not state or not api.nvim_win_is_valid(state.win) then return end
-  return state.rows[api.nvim_win_get_cursor(state.win)[1]]
+  local cursor = api.nvim_win_get_cursor(state.win)
+  for _, column in ipairs(state.columns or {}) do
+    for _, node in ipairs(column) do
+      if cursor[1] == node.row and node.map_row == (state.top or 1) + cursor[1] - 1 - (state.pad_y or 0)
+        and cursor[2] >= node.col and cursor[2] < node.end_col then
+        return node
+      end
+    end
+  end
+  return state.selected
+end
+
+local function fit(text, width)
+  if vim.fn.strdisplaywidth(text) > width then
+    while vim.fn.strdisplaywidth(text .. '…') > width do
+      text = vim.fn.strcharpart(text, 0, vim.fn.strchars(text) - 1)
+    end
+    text = text .. '…'
+  end
+  return text .. string.rep(' ', width - vim.fn.strdisplaywidth(text))
+end
+
+local function icon(node)
+  local ok, mini = pcall(require, 'mini.icons')
+  if ok then
+    local glyph, hl = mini.get(node.dir and 'directory' or 'file', node.path)
+    return glyph .. ' ', hl
+  end
+  if node.dir then
+    local glyph = config.icons and config.icons.directory or '󰉋'
+    return glyph and glyph .. ' ' or '', 'Directory'
+  end
+  local available, devicons = pcall(require, 'nvim-web-devicons')
+  if available then
+    local glyph, hl = devicons.get_icon(node.name, nil, { default = true })
+    return glyph and glyph .. ' ' or '', hl
+  end
+  return ' ', 'NormalFloat'
+end
+
+local function index_map()
+  local s = state
+  s.columns, s.nodes = {}, {}
+  local next_row = 1
+  local function visit(node, depth)
+    node.depth = depth
+    s.nodes[node.path] = node
+    local column = s.columns[depth]
+    if not column then column = { width = 12, byrow = {}, edges = {} }; s.columns[depth] = column end
+    local glyph, hl = icon(node)
+    node.glyph, node.icon_hl = glyph, hl
+    node.text = (node.dir and (node.open and '⌄ ' or '› ') or '  ') .. glyph .. node.name:gsub('%c', ' ') .. (node.dir and '/' or '')
+    column.width = math.min(32, math.max(column.width, vim.fn.strdisplaywidth(node.text) + 2))
+    local entries = node.dir and node.open and children(node) or {}
+    for _, child in ipairs(entries) do visit(child, depth + 1) end
+    if #entries > 0 then
+      node.first_row, node.last_row = entries[1].map_row, entries[#entries].map_row
+      node.map_row = math.floor((node.first_row + node.last_row) / 2)
+      column.edges[#column.edges + 1] = node
+    else
+      node.map_row = next_row
+      next_row = next_row + 2
+    end
+    column[#column + 1] = node
+    column.byrow[node.map_row] = node
+  end
+  for _, node in ipairs(children(s.root)) do visit(node, 1) end
+  if #s.columns == 0 then visit(s.root, 1) end
+  s.total_rows = math.max(1, next_row - 2)
+  for _, column in ipairs(s.columns) do
+    table.sort(column, function(a, b) return a.map_row < b.map_row end)
+    table.sort(column.edges, function(a, b) return a.first_row < b.first_row end)
+    for i, node in ipairs(column) do node.index = i end
+  end
+end
+
+local function connector(column, row)
+  local edges = column.edges
+  local low, high = 1, #edges
+  while low <= high do
+    local mid = math.floor((low + high) / 2)
+    if edges[mid].last_row < row then low = mid + 1 else high = mid - 1 end
+  end
+  local parent = edges[low]
+  if not parent or row < parent.first_row then return '      ' end
+  local child = state.columns[parent.depth + 1].byrow[row]
+  child = child and child.parent == parent
+  if parent.first_row == parent.last_row then return '───── ' end
+  if row == parent.map_row then
+    if row == parent.first_row then return '──┬── ' end
+    if row == parent.last_row then return '──┴── ' end
+    return child and '──┼── ' or '──┤   '
+  end
+  if child then
+    if row == parent.first_row then return '  ╭── ' end
+    if row == parent.last_row then return '  ╰── ' end
+    return '  ├── '
+  end
+  return '  │   '
 end
 
 local function render(target)
   local s = state
-  local lines, rows, highlights = {}, {}, {}
-  local selected = 1
-  local function visit(node, prefix, last, root)
-    local branch = root and '' or (last and '└─ ' or '├─ ')
-    local icon = node.dir and (node.open and '▾ ' or '▸ ') or '  '
-    local text = prefix .. branch .. icon .. node.name .. (node.dir and '/' or '')
-    rows[#rows + 1], lines[#lines + 1] = node, text
-    if target and node.path == target then selected = #rows end
-    highlights[#highlights + 1] = { #rows - 1, #prefix + #branch, node.dir and 'Directory' or 'Normal' }
-    if node.dir and node.open then
-      local entries = children(node)
-      local next_prefix = prefix .. (root and '' or (last and '   ' or '│  '))
-      for i, child in ipairs(entries) do visit(child, next_prefix, i == #entries, false) end
+  local selected = s.nodes[target] or (s.selected and s.nodes[s.selected.path]) or s.columns[1][1]
+  s.selected = selected
+  local height = api.nvim_win_get_height(s.win)
+  local width = api.nvim_win_get_width(s.win)
+  local map_width = 0
+  for _, column in ipairs(s.columns) do map_width = map_width + column.width + 4 end
+  map_width = map_width + (#s.columns - 1) * 6
+  local pad_x = math.max(0, math.floor((width - map_width) / 2))
+  s.pad_y = math.max(0, math.floor((height - s.total_rows) / 2))
+  local top = s.top or 1
+  if selected.map_row < top then top = selected.map_row end
+  if selected.map_row >= top + height then top = selected.map_row - height + 1 end
+  s.top = math.max(1, math.min(top, math.max(1, s.total_rows - height + 1)))
+  local lines, marks = {}, {}
+  local ancestors, ancestor = {}, selected.parent
+  while ancestor do ancestors[ancestor] = true; ancestor = ancestor.parent end
+  for _ = 1, s.pad_y do lines[#lines + 1] = '' end
+  for screen_row = s.pad_y + 1, math.min(height, s.pad_y + s.total_rows - s.top + 1) do
+    local row = s.top + screen_row - 1 - s.pad_y
+    local text = string.rep(' ', pad_x)
+    for depth, column in ipairs(s.columns) do
+      local node = column.byrow[row]
+      local start = #text
+      local content = node and node.text or ''
+      local rounded = node and (node.dir or node == selected)
+      local left, right = rounded and '' or ' ', rounded and '' or ' '
+      local fitted = fit(content, column.width)
+      local label = rounded and fitted or fitted:gsub(' +$', '')
+      local tail = column.width - vim.fn.strdisplaywidth(label)
+      text = text .. left .. ' ' .. label .. ' ' .. right
+      local label_end = #text
+      text = text .. string.rep(' ', tail)
+      if node then
+        node.row, node.col, node.end_col = screen_row, start, label_end
+        node.cursor_col = start + #left + 1
+        local group = node == selected and 'PathfinderSelected'
+          or ancestors[node] and 'PathfinderAncestor' or node.dir and 'PathfinderDirectory' or nil
+        if group then
+          marks[#marks + 1] = { screen_row - 1, start + #left, label_end - #right, group }
+          local edge = node == selected and 'PathfinderSelectedEdge'
+            or ancestors[node] and 'PathfinderAncestorEdge' or 'PathfinderDirectoryEdge'
+          marks[#marks + 1] = { screen_row - 1, start, start + #left, edge }
+          marks[#marks + 1] = { screen_row - 1, label_end - #right, label_end, edge }
+        end
+        if node.glyph ~= '' and node.icon_hl then
+          local icon_start = node.cursor_col + #(node.dir and (node.open and '⌄ ' or '› ') or '  ')
+          marks[#marks + 1] = { screen_row - 1, icon_start, icon_start + #node.glyph,
+            node == selected and 'PathfinderSelectedIcon' or node.dir and 'PathfinderFolderIcon' or 'PathfinderFileIcon' }
+        end
+      end
+      if depth < #s.columns then
+        local edge_start = #text
+        text = text .. connector(column, row)
+        marks[#marks + 1] = { screen_row - 1, edge_start, #text, 'PathfinderConnector' }
+      end
     end
+    lines[#lines + 1] = text
   end
-  visit(s.root, '', true, true)
-  s.rows = rows
+  while #lines < height do lines[#lines + 1] = '' end
   vim.bo[s.buf].modifiable = true
   api.nvim_buf_set_lines(s.buf, 0, -1, false, lines)
   api.nvim_buf_clear_namespace(s.buf, ns, 0, -1)
-  for _, hl in ipairs(highlights) do
-    api.nvim_buf_set_extmark(s.buf, ns, hl[1], hl[2], { end_col = #lines[hl[1] + 1], hl_group = hl[3] })
+  for _, mark in ipairs(marks) do
+    api.nvim_buf_set_extmark(s.buf, ns, mark[1], mark[2], { end_col = mark[3], hl_group = mark[4], hl_mode = 'combine' })
   end
   vim.bo[s.buf].modifiable = false
-  api.nvim_win_set_cursor(s.win, { selected, 0 })
-  api.nvim_win_call(s.win, function() vim.cmd('normal! zz') end)
-end
-
-local function reveal(path)
-  local node = state.root
-  if path == node.path then return node end
-  local relative = vim.fs.relpath(node.path, path)
-  if not relative then return node end
-  for part in relative:gmatch('[^/]+') do
-    node.open = true
-    local found
-    for _, child in ipairs(children(node)) do if child.name == part then found = child; break end end
-    if not found then return node end
-    node = found
-  end
-  return node
+  api.nvim_win_set_cursor(s.win, { selected.row, selected.cursor_col })
+  api.nvim_win_call(s.win, function() vim.fn.winrestview({ topline = 1 }) end)
 end
 
 function M.close()
@@ -88,47 +213,99 @@ function M.close()
   if api.nvim_win_is_valid(s.origin) then api.nvim_set_current_win(s.origin) end
 end
 
+-- Cross neighboring branches, opening only the path needed to keep depth.
 function M.vertical(delta)
   local node = current()
-  if not node or not node.parent then return end
-  local siblings = children(node.parent)
-  for i, sibling in ipairs(siblings) do
-    if sibling == node then
-      local index = math.max(1, math.min(#siblings, i + delta * vim.v.count1))
-      render(siblings[index].path)
-      return
+  if not node then return end
+  for _ = 1, vim.v.count1 do
+    local depth = node.depth
+    local branch, candidate = node, nil
+    while branch.parent do
+      local siblings = children(branch.parent)
+      for i, sibling in ipairs(siblings) do
+        if sibling == branch then candidate = siblings[i + delta]; break end
+      end
+      if candidate then break end
+      branch = branch.parent
     end
+    if not candidate then break end
+    local candidate_depth = branch.depth
+    while candidate_depth < depth and candidate.dir do
+      candidate.open = true
+      local entries = children(candidate)
+      local child = entries[delta > 0 and 1 or #entries]
+      if not child then break end
+      candidate = child
+      candidate_depth = candidate_depth + 1
+    end
+    index_map()
+    node = candidate
   end
+  render(node.path)
 end
 
 function M.horizontal(delta)
   local node = current()
-  if not node or not node.parent or not node.parent.parent then return end
-  local parent = node.parent
-  local dirs = vim.tbl_filter(function(n) return n.dir end, children(parent.parent))
-  for i, dir in ipairs(dirs) do
-    if dir == parent then
-      local destination = dirs[i + delta * vim.v.count1]
-      if not destination then return end
-      destination.open = true
-      local entries = children(destination)
-      local index = 1
-      for j, sibling in ipairs(children(parent)) do if sibling == node then index = j end end
-      local target = entries[math.min(index, #entries)] or destination
-      for _, entry in ipairs(entries) do if entry.name == node.name then target = entry; break end end
-      render(target.path)
-      return
+  if not node then return end
+  local row = node.map_row
+  for _ = 1, vim.v.count1 do
+    local column = state.columns[node.depth + delta]
+    if not column then break end
+    local target, distance
+    for _, candidate in ipairs(column) do
+      local d = math.abs(candidate.map_row - row)
+      if not distance or d < distance then target, distance = candidate, d end
+    end
+    node = target
+  end
+  render(node.path)
+end
+
+function M.set_expanded(expanded)
+  local node = current()
+  if not node or not node.dir then return end
+  local was_open = node.open
+  node.open = expanded == nil and not node.open or expanded == true
+  index_map()
+  local first_child = node.open and not was_open and children(node)[1]
+  render(first_child and first_child.path or node.path)
+end
+
+function M.expand_all()
+  local node = current()
+  if not node then return end
+  local pending = { state.root }
+  while #pending > 0 do
+    local directory = table.remove(pending)
+    directory.open = true
+    for _, child in ipairs(children(directory)) do
+      if child.dir then pending[#pending + 1] = child end
     end
   end
+  index_map()
+  render(node.path)
+end
+
+function M.collapse_all()
+  local node = current()
+  if not node then return end
+  while node.parent and node.parent ~= state.root do node = node.parent end
+  local function collapse(directory)
+    for _, child in ipairs(directory.children or {}) do
+      child.open = false
+      if child.dir then collapse(child) end
+    end
+  end
+  collapse(state.root)
+  index_map()
+  render(node.path)
 end
 
 function M.activate()
   local node = current()
   if not node then return end
   if node.dir then
-    node.open = not node.open
-    local entries = node.open and children(node) or {}
-    render(entries[1] and entries[1].path or node.path)
+    M.set_expanded()
   else
     local path = node.path
     M.close()
@@ -146,24 +323,34 @@ end
 function M.refresh()
   local node = current()
   if not node then return end
+  local path = node.path
   local opened = {}
-  local function save(n)
-    if n.open then opened[n.path] = true end
-    for _, c in ipairs(n.children or {}) do save(c) end
-  end
-  save(state.root)
+  for name, entry in pairs(state.nodes) do if entry.open then opened[name] = true end end
   state.root.children = nil
-  local function restore(n)
-    n.open = opened[n.path]
-    if n.open then for _, c in ipairs(children(n)) do restore(c) end end
+  local function restore(node)
+    node.open = opened[node.path] or node == state.root
+    if node.open then for _, child in ipairs(children(node)) do restore(child) end end
   end
   restore(state.root)
-  render(reveal(node.path).path)
+  index_map()
+  render(path)
 end
 
 local function dimensions()
-  return { relative = 'editor', row = 0, col = 0, width = vim.o.columns,
-    height = math.max(1, vim.o.lines - vim.o.cmdheight), style = 'minimal', border = 'none', zindex = 50 }
+  local footer = {}
+  for _, action in ipairs({
+    { 'h/l', 'columns' }, { 'j/k', 'nodes' }, { 'Space', 'toggle' },
+    { 'zo/zc', 'expand/collapse' }, { 'zR/zM', 'expand/collapse all' },
+    { '↵', 'open' }, { 'R', 'refresh' }, { 'q', 'close' },
+  }) do
+    footer[#footer + 1] = { '', 'PathfinderKeyEdge' }
+    footer[#footer + 1] = { action[1], 'PathfinderKey' }
+    footer[#footer + 1] = { '', 'PathfinderKeyEdge' }
+    footer[#footer + 1] = { ' ' .. action[2] .. '  ', 'PathfinderMuted' }
+  end
+  return { relative = 'editor', row = 0, col = 0, width = math.max(1, vim.o.columns - 2),
+    height = math.max(1, vim.o.lines - vim.o.cmdheight - 2), style = 'minimal',
+    border = 'rounded', zindex = 50, footer = footer, footer_pos = 'center' }
 end
 
 function M.open(opts)
@@ -174,17 +361,32 @@ function M.open(opts)
   local start = file ~= '' and file or cwd
   local root = vim.fs.normalize(opts.root or vim.fs.root(start, { '.git' }) or cwd)
   if not opts.root and file ~= '' and not vim.fs.relpath(root, file) then root = vim.fs.dirname(file) end
+  local stat = uv.fs_stat(root)
+  if not stat or stat.type ~= 'directory' then
+    vim.notify('Pathfinder: directory not found: ' .. root, vim.log.levels.ERROR)
+    return
+  end
   local buf = api.nvim_create_buf(false, true)
   local origin = api.nvim_get_current_win()
   local win = api.nvim_open_win(buf, true, dimensions())
   state = { buf = buf, win = win, origin = origin, rows = {},
-    root = { path = root, name = root, dir = true, open = true } }
+    root = { path = root, name = vim.fs.basename(root), dir = true, open = true } }
   vim.bo[buf].bufhidden = 'wipe'
   vim.bo[buf].filetype = 'pathfinder'
   vim.bo[buf].swapfile = false
-  vim.wo[win].cursorline = true
+  require('pathfinder.theme').apply()
+  local theme_group = api.nvim_create_augroup('PathfinderTheme', { clear = true })
+  api.nvim_create_autocmd('ColorScheme', { group = theme_group, callback = function()
+    require('pathfinder.theme').apply()
+  end })
+  local display_root = vim.fn.fnamemodify(root, ':~'):gsub('%%', '%%%%'):gsub('%%c', ' ')
+  vim.wo[win].winbar = '%=%#PathfinderSelectedEdge#%#PathfinderBadge# 󰉋 pathfinder %#PathfinderSelectedEdge#%#PathfinderNormal#  %#PathfinderMuted#' .. display_root .. '%='
+  vim.wo[win].winhighlight = 'Normal:PathfinderNormal,NormalFloat:PathfinderNormal,FloatBorder:PathfinderBorder,WinBar:PathfinderNormal,WinBarNC:PathfinderNormal'
+  vim.wo[win].fillchars = 'eob: '
+  vim.wo[win].cursorline = false
+  vim.wo[win].sidescrolloff = 3
   vim.wo[win].wrap = false
-  vim.wo[win].scrolloff = 3
+  vim.wo[win].scrolloff = 0
   local maps = {
     j = function() M.vertical(1) end, k = function() M.vertical(-1) end,
     h = function() M.horizontal(-1) end, l = function() M.horizontal(1) end,
@@ -192,23 +394,86 @@ function M.open(opts)
     ['<Left>'] = function() M.horizontal(-1) end, ['<Right>'] = function() M.horizontal(1) end,
     ['<CR>'] = M.activate, ['<BS>'] = M.parent, ['-'] = M.parent,
     q = M.close, ['<Esc>'] = M.close, ['<C-p>'] = M.close, R = M.refresh,
-    ['<Space>'] = function()
-      local node = current()
-      if node and node.dir then node.open = not node.open; render(node.path) end
-    end,
+    ['<Space>'] = function() M.set_expanded() end,
+    zo = function() M.set_expanded(true) end,
+    zc = function() M.set_expanded(false) end,
+    zR = M.expand_all, zM = M.collapse_all,
+
   }
-  for key, action in pairs(maps) do vim.keymap.set('n', key, action, { buffer = buf, silent = true, nowait = true }) end
+  local descriptions = {
+    j = 'Next node', k = 'Previous node', h = 'Previous column', l = 'Next column',
+    ['<Down>'] = 'Next node', ['<Up>'] = 'Previous node',
+    ['<Left>'] = 'Previous column', ['<Right>'] = 'Next column',
+    ['<CR>'] = 'Open file or toggle directory', ['<Space>'] = 'Toggle directory',
+    ['<BS>'] = 'Select parent', ['-'] = 'Select parent',
+    q = 'Close Pathfinder', ['<Esc>'] = 'Close Pathfinder', ['<C-p>'] = 'Close Pathfinder',
+    R = 'Refresh tree', zo = 'Expand node', zc = 'Collapse node',
+    zR = 'Expand all nodes', zM = 'Collapse all nodes',
+  }
+  for key, action in pairs(maps) do
+    vim.keymap.set('n', key, action, { buffer = buf, silent = true, nowait = true, desc = descriptions[key] })
+  end
   api.nvim_create_autocmd('VimResized', { buffer = buf, callback = function()
-    if state and state.buf == buf and api.nvim_win_is_valid(win) then api.nvim_win_set_config(win, dimensions()) end
+    if state and state.buf == buf and api.nvim_win_is_valid(win) then
+      local node = current()
+      api.nvim_win_set_config(win, dimensions())
+      render(node and node.path)
+    end
   end })
   api.nvim_create_autocmd('BufWipeout', { buffer = buf, once = true, callback = function()
     if state and state.buf == buf then state = nil end
   end })
-  render(reveal(file).path)
+  local node = state.root
+  local relative = vim.fs.relpath(root, file)
+  if relative then
+    for part in relative:gmatch('[^/]+') do
+      node.open = true
+      local found
+      for _, child in ipairs(children(node)) do if child.name == part then found = child; break end end
+      if not found then break end
+      node = found
+    end
+  end
+  index_map()
+  render(file)
 end
 
 function M.setup(opts)
   config = vim.tbl_deep_extend('force', config, opts or {})
+  local group = api.nvim_create_augroup('PathfinderExplorer', { clear = true })
+  if not config.default_explorer then return end
+  vim.g.loaded_netrw = 1
+  vim.g.loaded_netrwPlugin = 1
+
+  local function open_directory(buf, win)
+    if state or not api.nvim_buf_is_valid(buf) or not api.nvim_win_is_valid(win)
+      or api.nvim_win_get_buf(win) ~= buf then return end
+    local path = api.nvim_buf_get_name(buf)
+    local stat = uv.fs_stat(path)
+    if not stat or stat.type ~= 'directory' then return end
+    api.nvim_set_current_win(win)
+    -- Return to an ordinary empty buffer when the explorer is closed.
+    api.nvim_win_set_buf(win, api.nvim_create_buf(true, false))
+    M.open({ root = path })
+  end
+
+  api.nvim_create_autocmd('BufEnter', { group = group, callback = function(args)
+    if vim.v.vim_did_enter == 0 then return end
+    local win = api.nvim_get_current_win()
+    vim.schedule(function() open_directory(args.buf, win) end)
+  end })
+  api.nvim_create_autocmd('VimEnter', { group = group, once = true, callback = function()
+    local buf, win = api.nvim_get_current_buf(), api.nvim_get_current_win()
+    open_directory(buf, win)
+    if not state and vim.fn.argc() == 0 and api.nvim_buf_get_name(buf) == ''
+      and vim.bo[buf].buftype == '' and not vim.bo[buf].modified
+      and api.nvim_buf_line_count(buf) == 1 and api.nvim_buf_get_lines(buf, 0, 1, false)[1] == '' then
+      M.open()
+    end
+  end })
+  api.nvim_create_user_command('Explore', function(args)
+    M.open({ root = args.args ~= '' and vim.fn.fnamemodify(args.args, ':p') or vim.fn.getcwd() })
+  end, { nargs = '?', complete = 'dir', desc = 'Explore with Pathfinder', force = true })
 end
 
 return M

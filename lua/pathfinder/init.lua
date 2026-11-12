@@ -83,7 +83,7 @@ local function icon(node)
     local glyph, hl = devicons.get_icon(node.name, nil, { default = true })
     return glyph and glyph .. ' ' or '', hl
   end
-  return ' ', 'NormalFloat'
+  return ' ', 'Normal'
 end
 
 local function index_map()
@@ -479,11 +479,7 @@ function M.open(opts)
   vim.bo[buf].bufhidden = 'wipe'
   vim.bo[buf].filetype = 'pathfinder'
   vim.bo[buf].swapfile = false
-  require('pathfinder.theme').apply()
-  local theme_group = api.nvim_create_augroup('PathfinderTheme', { clear = true })
-  api.nvim_create_autocmd('ColorScheme', { group = theme_group, callback = function()
-    require('pathfinder.theme').apply()
-  end })
+  require('pathfinder.theme').setup()
   local display_root = vim.fn.fnamemodify(root, ':~'):gsub('%%', '%%%%'):gsub('%%c', ' ')
   api.nvim_set_option_value('winbar', '%=%#PathfinderSelectedEdge#%#PathfinderBadge# 󰉋 pathfinder %#PathfinderSelectedEdge#%#PathfinderNormal#  %#PathfinderMuted#' .. display_root .. '  D database  ·  zR/zM expand/collapse all  ·  q close%=', { win = win, scope = 'local' })
   api.nvim_set_option_value('winhighlight', 'Normal:PathfinderNormal,NormalFloat:PathfinderNormal,FloatBorder:PathfinderBorder,WinBar:PathfinderNormal,WinBarNC:PathfinderNormal', { win = win, scope = 'local' })

@@ -217,7 +217,7 @@ function M.prompt()
   local win = api.nvim_open_win(buf, true, input_dimensions())
   s.input = { buf = buf, win = win }
   vim.wo[win].wrap = false
-  api.nvim_set_option_value('winhighlight', 'Normal:PathfinderNormal,NormalFloat:PathfinderNormal,FloatBorder:PathfinderBorder', { win = win, scope = 'local' })
+  api.nvim_set_option_value('winhighlight', 'Normal:PathfinderNormal,NormalFloat:PathfinderNormal,FloatBorder:PathfinderBorder,FloatTitle:Title,FloatFooter:Comment,WinBar:PathfinderNormal,WinBarNC:PathfinderNormal', { win = win, scope = 'local' })
   local function cancel() if session == s then dismiss_input(s) end end
   local function submit()
     if session ~= s or not s.input or s.input.buf ~= buf then return end
@@ -256,6 +256,7 @@ function M.toggle(opts)
     tables, connection, project_root = nil, nil, root
     view = { expanded = {}, hidden = {}, index = 1 }
   end
+  require('pathfinder.theme').setup()
   local origin = api.nvim_get_current_win()
   local buf = api.nvim_create_buf(false, true)
   local win = api.nvim_open_win(buf, true, dimensions())
@@ -263,7 +264,7 @@ function M.toggle(opts)
   vim.bo[buf].bufhidden, vim.bo[buf].swapfile, vim.bo[buf].filetype = 'wipe', false, 'pathfinder_database'
   vim.wo[win].wrap, vim.wo[win].signcolumn = false, 'no'
   api.nvim_set_option_value('winbar', ' Database  ·  hjkl move  ·  Enter detail  ·  Space toggle  ·  zR/zM all  ·  H hide/I restore  ·  u URL  ·  R refresh  ·  D files', { win = win, scope = 'local' })
-  api.nvim_set_option_value('winhighlight', 'Normal:PathfinderNormal,NormalFloat:PathfinderNormal,FloatBorder:PathfinderBorder', { win = win, scope = 'local' })
+  api.nvim_set_option_value('winhighlight', 'Normal:PathfinderNormal,NormalFloat:PathfinderNormal,FloatBorder:PathfinderBorder,FloatTitle:Title,FloatFooter:Comment,WinBar:PathfinderNormal,WinBarNC:PathfinderNormal', { win = win, scope = 'local' })
   local function move(delta)
     if #session.positions == 0 then return end
     session.index = math.max(1, math.min(#session.positions, session.index + delta * vim.v.count1))
@@ -328,7 +329,7 @@ function M.toggle(opts)
     vim.wo[detail_win].wrap = true
     vim.wo[detail_win].linebreak = true
     vim.wo[detail_win].breakindent = true
-    api.nvim_set_option_value('winhighlight', 'Normal:PathfinderNormal,NormalFloat:PathfinderNormal,FloatBorder:PathfinderBorder', { win = detail_win, scope = 'local' })
+    api.nvim_set_option_value('winhighlight', 'Normal:PathfinderNormal,NormalFloat:PathfinderNormal,FloatBorder:PathfinderBorder,FloatTitle:Title,FloatFooter:Comment,WinBar:PathfinderNormal,WinBarNC:PathfinderNormal', { win = detail_win, scope = 'local' })
     for _, key in ipairs({ '<Esc>', 'q', '<CR>', '<BS>', '-' }) do
       vim.keymap.set('n', key, function() dismiss_input(s) end, { buffer = detail, silent = true })
     end

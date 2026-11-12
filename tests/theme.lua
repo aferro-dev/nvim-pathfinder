@@ -1,0 +1,17 @@
+vim.opt.runtimepath:prepend(vim.fn.getcwd())
+vim.api.nvim_set_hl(0, 'Normal', { fg = '#dddddd', bg = '#111111' })
+vim.api.nvim_set_hl(0, 'NormalFloat', { fg = '#ffffff', bg = '#222222' })
+vim.api.nvim_set_hl(0, 'Visual', { bg = '#333333' })
+local theme = require('pathfinder.theme')
+theme.setup()
+for group, target in pairs({ PathfinderNormal = 'Normal', PathfinderSelected = 'Visual', PathfinderDirectory = 'Directory', PathfinderBorder = 'WinSeparator' }) do
+  assert(vim.api.nvim_get_hl(0, { name = group }).link == target)
+end
+assert(vim.api.nvim_get_hl(0, { name = 'PathfinderNormal', link = false }).bg == 0x111111)
+assert(vim.api.nvim_get_hl(0, { name = 'PathfinderSelectedEdge', link = false }).bg == 0x111111)
+vim.api.nvim_set_hl(0, 'Normal', { bg = '#444444' })
+vim.api.nvim_exec_autocmds('ColorScheme', {})
+assert(vim.api.nvim_get_hl(0, { name = 'PathfinderNormal', link = false }).bg == 0x444444)
+assert(vim.api.nvim_get_hl(0, { name = 'PathfinderSelectedEdge', link = false }).bg == 0x444444)
+print('Editor theme colors and colorscheme changes passed')
+vim.cmd('qa!')

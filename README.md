@@ -2,7 +2,7 @@
 
 A full-screen, two-dimensional file tree for Neovim 0.11+. Each directory appears once, connected directly to its children in the next column. Nodes occupy one row each, with compact capsules and short connectors between columns. The map is centered horizontally and vertically and adjusts as branches expand or the terminal resizes.
 
-Directories, selection, and shortcut labels use rounded capsules with Nerd Font glyphs. Colors follow your Neovim colorscheme: surfaces, selection, borders, and shortcut labels link to standard highlight groups. Rounded caps derive their colors from those surfaces and update when the colorscheme changes. Icon glyphs and colors come from `mini.icons` or `nvim-web-devicons`, with built-in fallbacks. You can customize the `Pathfinder*` highlight groups in your Neovim configuration.
+Directories, selection, and shortcut labels use rounded capsules with Nerd Font glyphs. Colors follow the editor directly: backgrounds use `Normal`, selection uses `Visual`, directories use `Directory`, and borders use `WinSeparator`, including database views and modals. Rounded caps derive their colors from those surfaces and update when the colorscheme changes. Icon glyphs and colors come from `mini.icons` or `nvim-web-devicons`, with built-in fallbacks. You can customize the `Pathfinder*` highlight groups in your Neovim configuration.
 
 Pathfinder replaces netrw: it opens with `nvim`, `nvim .`, `nvim /path/to/directory`, and when you open a directory with `:edit`. `:Explore` also opens Pathfinder. Starting Neovim with a file opens that file normally. To disable this integration, call `setup({ default_explorer = false })` before plugins load.
 
@@ -108,5 +108,6 @@ nvim --headless -u NONE -l tests/grid.lua
 nvim --headless -u NONE -l tests/actions.lua
 nvim --headless -u NONE -l tests/gitignore.lua
 nvim --headless -u NONE -l tests/database.lua
+nvim --headless -u NONE -l tests/theme.lua
 python3 tests/startup.py
 ```

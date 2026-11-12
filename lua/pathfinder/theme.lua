@@ -3,15 +3,15 @@ local M = {}
 -- Link to the user's highlights; only rounded caps need derived colors.
 function M.apply()
   local links = {
-    PathfinderNormal = 'NormalFloat',
-    PathfinderDirectory = 'Pmenu',
+    PathfinderNormal = 'Normal',
+    PathfinderDirectory = 'Directory',
     PathfinderAncestor = 'CursorLine',
-    PathfinderSelected = 'PmenuSel',
-    PathfinderBadge = 'PmenuSel',
+    PathfinderSelected = 'Visual',
+    PathfinderBadge = 'Title',
     PathfinderConnector = 'NonText',
-    PathfinderBorder = 'FloatBorder',
+    PathfinderBorder = 'WinSeparator',
     PathfinderMuted = 'Comment',
-    PathfinderKey = 'StatusLine',
+    PathfinderKey = 'Special',
   }
   for name, target in pairs(links) do
     vim.api.nvim_set_hl(0, name, { default = true, link = target })
@@ -32,6 +32,12 @@ function M.apply()
       ctermbg = canvas.ctermbg or normal.ctermbg,
     })
   end
+end
+
+function M.setup()
+  M.apply()
+  local group = vim.api.nvim_create_augroup('PathfinderTheme', { clear = true })
+  vim.api.nvim_create_autocmd('ColorScheme', { group = group, callback = M.apply })
 end
 
 return M

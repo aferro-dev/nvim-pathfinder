@@ -1,6 +1,7 @@
 { pkgs, ... }:
 {
   programs.nixvim = {
+    extraPackages = [ pkgs.python3 pkgs.postgresql ];
     extraPlugins = [ (import ../default.nix { inherit pkgs; }) ];
     extraConfigLua = ''require("pathfinder").setup({})'';
     keymaps = [{

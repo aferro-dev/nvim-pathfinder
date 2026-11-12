@@ -94,11 +94,11 @@ local function index_map()
     node.depth = depth
     s.nodes[node.path] = node
     local column = s.columns[depth]
-    if not column then column = { width = 12, byrow = {}, edges = {} }; s.columns[depth] = column end
+    if not column then column = { width = 4, byrow = {}, edges = {} }; s.columns[depth] = column end
     local glyph, hl = icon(node)
     node.glyph, node.icon_hl = glyph, hl
     node.text = (node.dir and (node.open and '⌄ ' or '› ') or '  ') .. glyph .. node.name:gsub('%c', ' ') .. (node.dir and '/' or '')
-    column.width = math.min(32, math.max(column.width, vim.fn.strdisplaywidth(node.text) + 2))
+    column.width = math.min(28, math.max(column.width, vim.fn.strdisplaywidth(node.text)))
     local entries = node.dir and node.open and children(node) or {}
     for _, child in ipairs(entries) do visit(child, depth + 1) end
     if #entries > 0 then
@@ -107,14 +107,14 @@ local function index_map()
       column.edges[#column.edges + 1] = node
     else
       node.map_row = next_row
-      next_row = next_row + 2
+      next_row = next_row + 1
     end
     column[#column + 1] = node
     column.byrow[node.map_row] = node
   end
   for _, node in ipairs(children(s.root)) do visit(node, 1) end
   if #s.columns == 0 then visit(s.root, 1) end
-  s.total_rows = math.max(1, next_row - 2)
+  s.total_rows = math.max(1, next_row - 1)
   for _, column in ipairs(s.columns) do
     table.sort(column, function(a, b) return a.map_row < b.map_row end)
     table.sort(column.edges, function(a, b) return a.first_row < b.first_row end)
@@ -130,21 +130,21 @@ local function connector(column, row)
     if edges[mid].last_row < row then low = mid + 1 else high = mid - 1 end
   end
   local parent = edges[low]
-  if not parent or row < parent.first_row then return '      ' end
+  if not parent or row < parent.first_row then return '   ' end
   local child = state.columns[parent.depth + 1].byrow[row]
   child = child and child.parent == parent
-  if parent.first_row == parent.last_row then return '───── ' end
+  if parent.first_row == parent.last_row then return '── ' end
   if row == parent.map_row then
-    if row == parent.first_row then return '──┬── ' end
-    if row == parent.last_row then return '──┴── ' end
-    return child and '──┼── ' or '──┤   '
+    if row == parent.first_row then return '─┬─' end
+    if row == parent.last_row then return '─┴─' end
+    return child and '─┼─' or '─┤ '
   end
   if child then
-    if row == parent.first_row then return '  ╭── ' end
-    if row == parent.last_row then return '  ╰── ' end
-    return '  ├── '
+    if row == parent.first_row then return ' ╭─' end
+    if row == parent.last_row then return ' ╰─' end
+    return ' ├─'
   end
-  return '  │   '
+  return ' │ '
 end
 
 local function render(target)
@@ -154,8 +154,8 @@ local function render(target)
   local height = api.nvim_win_get_height(s.win)
   local width = api.nvim_win_get_width(s.win)
   local map_width = 0
-  for _, column in ipairs(s.columns) do map_width = map_width + column.width + 4 end
-  map_width = map_width + (#s.columns - 1) * 6
+  for _, column in ipairs(s.columns) do map_width = map_width + column.width + 2 end
+  map_width = map_width + (#s.columns - 1) * 3
   local pad_x = math.max(0, math.floor((width - map_width) / 2))
   s.pad_y = math.max(0, math.floor((height - s.total_rows) / 2))
   local top = s.top or 1
@@ -178,12 +178,12 @@ local function render(target)
       local fitted = fit(content, column.width)
       local label = rounded and fitted or fitted:gsub(' +$', '')
       local tail = column.width - vim.fn.strdisplaywidth(label)
-      text = text .. left .. ' ' .. label .. ' ' .. right
+      text = text .. left .. label .. right
       local label_end = #text
       text = text .. string.rep(' ', tail)
       if node then
         node.row, node.col, node.end_col = screen_row, start, label_end
-        node.cursor_col = start + #left + 1
+        node.cursor_col = start + #left
         local group = node == selected and 'PathfinderSelected'
           or ancestors[node] and 'PathfinderAncestor' or node.dir and 'PathfinderDirectory' or nil
         if group then
@@ -442,21 +442,8 @@ function M.delete()
 end
 
 local function dimensions()
-  local footer = {}
-  for _, action in ipairs({
-    { 'h', 'previous column' }, { 'l', 'expand/enter' }, { 'j/k', 'nodes' }, { 'Space', 'toggle' },
-    { 'zo/zc', 'expand/collapse' }, { 'zR/zM', 'expand/collapse all' },
-    { '↵', 'open' }, { 'a', 'create' }, { 'd', 'delete' },
-    { 'I', config.gitignore and 'ignored: hidden' or 'ignored: shown' }, { 'R', 'refresh' }, { 'q', 'close' },
-  }) do
-    footer[#footer + 1] = { '', 'PathfinderKeyEdge' }
-    footer[#footer + 1] = { action[1], 'PathfinderKey' }
-    footer[#footer + 1] = { '', 'PathfinderKeyEdge' }
-    footer[#footer + 1] = { ' ' .. action[2] .. '  ', 'PathfinderMuted' }
-  end
-  return { relative = 'editor', row = 0, col = 0, width = math.max(1, vim.o.columns - 2),
-    height = math.max(1, vim.o.lines - vim.o.cmdheight - 2), style = 'minimal',
-    border = 'rounded', zindex = 50, footer = footer, footer_pos = 'center' }
+  return { relative = 'editor', row = 0, col = 0, width = math.max(1, vim.o.columns),
+    height = math.max(1, vim.o.lines - vim.o.cmdheight), style = 'minimal', border = 'none', zindex = 50 }
 end
 
 function M.toggle_gitignore()
@@ -465,6 +452,10 @@ function M.toggle_gitignore()
   config.gitignore = not config.gitignore
   reload(node.path)
   api.nvim_win_set_config(state.win, dimensions())
+end
+
+function M.database()
+  require('pathfinder.database').toggle({ root = state and state.root.path or nil })
 end
 
 function M.open(opts)
@@ -494,8 +485,8 @@ function M.open(opts)
     require('pathfinder.theme').apply()
   end })
   local display_root = vim.fn.fnamemodify(root, ':~'):gsub('%%', '%%%%'):gsub('%%c', ' ')
-  vim.wo[win].winbar = '%=%#PathfinderSelectedEdge#%#PathfinderBadge# 󰉋 pathfinder %#PathfinderSelectedEdge#%#PathfinderNormal#  %#PathfinderMuted#' .. display_root .. '%='
-  vim.wo[win].winhighlight = 'Normal:PathfinderNormal,NormalFloat:PathfinderNormal,FloatBorder:PathfinderBorder,WinBar:PathfinderNormal,WinBarNC:PathfinderNormal'
+  api.nvim_set_option_value('winbar', '%=%#PathfinderSelectedEdge#%#PathfinderBadge# 󰉋 pathfinder %#PathfinderSelectedEdge#%#PathfinderNormal#  %#PathfinderMuted#' .. display_root .. '  D database  ·  zR/zM expand/collapse all  ·  q close%=', { win = win, scope = 'local' })
+  api.nvim_set_option_value('winhighlight', 'Normal:PathfinderNormal,NormalFloat:PathfinderNormal,FloatBorder:PathfinderBorder,WinBar:PathfinderNormal,WinBarNC:PathfinderNormal', { win = win, scope = 'local' })
   vim.wo[win].fillchars = 'eob: '
   vim.wo[win].cursorline = false
   vim.wo[win].sidescrolloff = 3
@@ -513,6 +504,7 @@ function M.open(opts)
     zc = function() M.set_expanded(false) end,
     zR = M.expand_all, zM = M.collapse_all,
     a = M.create, d = M.delete, I = M.toggle_gitignore,
+    D = M.database,
 
   }
   local descriptions = {
@@ -525,6 +517,7 @@ function M.open(opts)
     R = 'Refresh tree', zo = 'Expand node', zc = 'Collapse node',
     zR = 'Expand all nodes', zM = 'Collapse all nodes',
     a = 'Create file or directory', d = 'Delete file or directory', I = 'Toggle Git-ignored files',
+    D = 'Switch to database UML',
   }
   for key, action in pairs(maps) do
     vim.keymap.set('n', key, action, { buffer = buf, silent = true, nowait = true, desc = descriptions[key] })

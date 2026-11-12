@@ -1,6 +1,6 @@
 # nvim-pathfinder
 
-A full-screen, two-dimensional file tree for Neovim 0.11+. Each directory appears once, connected directly to its children in the next column. The map is centered horizontally and vertically and adjusts as branches expand or the terminal resizes.
+A full-screen, two-dimensional file tree for Neovim 0.11+. Each directory appears once, connected directly to its children in the next column. Nodes occupy one row each, with compact capsules and short connectors between columns. The map is centered horizontally and vertically and adjusts as branches expand or the terminal resizes.
 
 Directories, selection, and shortcut labels use rounded capsules with Nerd Font glyphs. Colors follow your Neovim colorscheme: surfaces, selection, borders, and shortcut labels link to standard highlight groups. Rounded caps derive their colors from those surfaces and update when the colorscheme changes. Icon glyphs and colors come from `mini.icons` or `nvim-web-devicons`, with built-in fallbacks. You can customize the `Pathfinder*` highlight groups in your Neovim configuration.
 
@@ -22,15 +22,38 @@ Pathfinder replaces netrw: it opens with `nvim`, `nvim .`, `nvim /path/to/direct
 | `Backspace`, `-` | Select parent |
 | `a` | Create file or directory |
 | `d` | Delete file or directory after confirmation |
+| `D` | Switch to database UML; enter a URL or a project `.env` variable |
 | `I` | Toggle Git-ignored files |
 | `R` | Refresh tree, preserving expanded nodes |
 | `q`, `Esc`, `Ctrl-P` | Close Pathfinder and return to the original window |
 
 `zR` keeps the selected node. `zM` selects its ancestor in the root directory when necessary. Bulk expansion follows the configured filters and never traverses symbolic links.
 
-The root path appears in the top bar, with shortcuts along the bottom frame. Long names are shortened, and the viewport follows the selected node. Movements support counts such as `3j` and stop at the boundaries.
+The root path appears in the top bar, with shortcuts in the top bar. Long names are shortened, and the viewport follows the selected node. Movements support counts such as `3j` and stop at the boundaries.
 
 Hidden files and Git-ignored files are visible by default; `.git` is always excluded by the default name filter. Press `I` to hide or show Git-ignored entries. The footer displays `ignored: hidden` or `ignored: shown`. Set `gitignore = true` in `setup()` to start with ignored entries hidden. The filter uses Git itself, including nested ignore files, negation rules, repository excludes, and global excludes; tracked files remain visible. Git must be installed for this filter. `R` reloads the ignore rules after edits. Directories load when expanded and appear before files, sorted by name. Symbolic links remain leaf nodes to prevent cycles. Git status indicators are not included.
+
+## Database UML
+
+Press `D` in the file tree, or run `:PathfinderDatabase`. A centered modal opens with `DATABASE_URL` prefilled. Enter a connection URL or a variable from the project root's `.env` file; press Enter to connect or Esc to cancel:
+
+```text
+DATABASE_URL
+$DATABASE_URL
+${DATABASE_URL}
+sqlite:///absolute/path/database.db
+sqlite://relative/database.db
+postgresql://user:password@localhost:5432/database
+postgres://user:password@localhost:5432/database
+```
+
+`.env` entries can use `export`, single or double quotes, and trailing comments. Values are read literally; shell commands and variable interpolation are not evaluated. Relative SQLite paths resolve from the project root. URL-encode special characters in URLs. SQLite requires an existing file and opens it read-only; PostgreSQL reads metadata in a read-only transaction.
+
+The database map starts with every table collapsed, occupying one row per table. Spacing between layers and tables expands to use the available window and stays compact when the graph exceeds the viewport. Tables are arranged by their relationships, with directed connectors that remain visible when columns are collapsed. Selected tables and their incoming and outgoing connections are highlighted; other connections stay dim. Parallel foreign keys between the same tables share a connector, with every column mapping available in the detail modal. Large graphs scroll with the selected table. `hjkl` / arrow keys move between tables; `Tab` / `Shift-Tab` select the next or previous table. Enter opens a centered table modal with aligned key, column, type, and nullability fields, plus separate outgoing and incoming relationship sections. The map omits the common `public.` prefix and abbreviates long PostgreSQL type names; the modal retains the full table and column names. Esc or `q` closes the modal. Composite foreign keys show each column mapping, and PostgreSQL table names include their schema.
+
+Space toggles inline columns; `zo` / `zc` expand or collapse a table, and `zR` / `zM` expand or collapse all tables. `H` hides the selected table; `I` restores hidden tables. `R` reloads metadata (and rereads a `.env` variable); `u` opens the connection modal. `D`, `q`, or Esc returns to the file tree. Each view retains its selection and expansion state when switching. Both main views fill the screen without an outer frame; shortcuts appear in the top bar. Connections load asynchronously, and the last successful schema remains available if reconnecting fails. Pathfinder does not write connection details to project files or include credentials in error messages.
+
+SQLite support requires Python 3 with its standard `sqlite3` module; PostgreSQL requires `psql` on `PATH`. The Nixvim module includes both dependencies. Other installations must provide them separately. PostgreSQL password prompts are disabled: supply credentials in the URL or through libpq configuration such as `.pgpass`. Connections time out rather than blocking Neovim.
 
 ## File actions
 
@@ -84,5 +107,6 @@ nvim --headless -u NONE -l tests/smoke.lua
 nvim --headless -u NONE -l tests/grid.lua
 nvim --headless -u NONE -l tests/actions.lua
 nvim --headless -u NONE -l tests/gitignore.lua
+nvim --headless -u NONE -l tests/database.lua
 python3 tests/startup.py
 ```

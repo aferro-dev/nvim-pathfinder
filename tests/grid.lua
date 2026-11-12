@@ -107,10 +107,8 @@ p.expand_all(); has('nested/')
 assert(contents():find('leaf.lua', 1, true))
 assert(vim.fn.maparg('zR', 'n', false, true).desc == 'Expand all nodes')
 assert(vim.fn.maparg('zM', 'n', false, true).desc == 'Collapse all nodes')
-local footer = vim.api.nvim_win_get_config(0).footer
-local labels = {}
-for _, chunk in ipairs(footer) do labels[#labels + 1] = chunk[1] end
-assert(table.concat(labels):find('expand/collapse all', 1, true))
+assert(vim.wo.winbar:find('expand/collapse all', 1, true))
+assert(vim.api.nvim_win_get_config(0).border == 'none')
 p.close()
 -- Offscreen nodes must not retain clickable cursor positions after scrolling.
 for i = 1, 80 do vim.fn.writefile({}, root .. '/' .. string.format('%03d.txt', i)) end

@@ -119,6 +119,15 @@ p.vertical(-1); has('079.txt')
 for _ = 1, 60 do p.vertical(-1) end
 has('019.txt')
 p.vertical(1); has('020.txt')
+p.center(); has('020.txt') -- near the beginning, centering respects map boundaries
+for _ = 1, 20 do p.vertical(1) end
+has('040.txt')
+local center_map = vim.fn.maparg('zz', 'n', false, true)
+assert(center_map.desc == 'Center selected node')
+center_map.callback()
+has('040.txt')
+assert(vim.api.nvim_win_get_cursor(0)[1] == math.floor(vim.api.nvim_win_get_height(0) / 2) + 1)
+p.vertical(1); has('041.txt')
 p.close()
 vim.fn.delete(root, 'rf')
 print('Tree map navigation passed')

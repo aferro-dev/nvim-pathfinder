@@ -219,6 +219,13 @@ local function render(target)
   api.nvim_win_call(s.win, function() vim.fn.winrestview({ topline = 1 }) end)
 end
 
+function M.center()
+  local node = current()
+  if not node then return end
+  state.top = node.map_row - math.floor(api.nvim_win_get_height(state.win) / 2)
+  render(node.path)
+end
+
 function M.close()
   local s = state
   if not s then return end
@@ -498,7 +505,7 @@ function M.open(opts)
     ['<Space>'] = function() M.set_expanded() end,
     zo = function() M.set_expanded(true) end,
     zc = function() M.set_expanded(false) end,
-    zR = M.expand_all, zM = M.collapse_all,
+    zR = M.expand_all, zM = M.collapse_all, zz = M.center,
     a = M.create, d = M.delete, I = M.toggle_gitignore,
     D = M.database,
 
@@ -511,7 +518,7 @@ function M.open(opts)
     ['<BS>'] = 'Select parent', ['-'] = 'Select parent',
     q = 'Close Pathfinder', ['<Esc>'] = 'Close Pathfinder', ['<C-p>'] = 'Close Pathfinder',
     R = 'Refresh tree', zo = 'Expand node', zc = 'Collapse node',
-    zR = 'Expand all nodes', zM = 'Collapse all nodes',
+    zR = 'Expand all nodes', zM = 'Collapse all nodes', zz = 'Center selected node',
     a = 'Create file or directory', d = 'Delete file or directory', I = 'Toggle Git-ignored files',
     D = 'Switch to database UML',
   }

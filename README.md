@@ -19,7 +19,7 @@ Pathfinder replaces netrw: it opens with `nvim`, `nvim .`, `nvim /path/to/direct
 | `Space` | Toggle directory; expanding selects the first child |
 | `zo` / `zc` | Expand / collapse node |
 | `zR` / `zM` | Expand all nodes / collapse all nodes |
-| `zz` | Center the view vertically on the selected node (within map boundaries) |
+| `zz` | Center the view vertically and horizontally on the selected node (within map boundaries) |
 | `Backspace`, `-` | Select parent |
 | `a` | Create file or directory |
 | `d` | Delete file or directory after confirmation |

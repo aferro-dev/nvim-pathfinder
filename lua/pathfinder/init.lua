@@ -241,6 +241,10 @@ function M.center()
   if not node then return end
   state.top = node.map_row - math.floor(api.nvim_win_get_height(state.win) / 2)
   render(node.path)
+  api.nvim_win_call(state.win, function()
+    local left = math.max(0, vim.fn.virtcol('.') - 1 - math.floor(api.nvim_win_get_width(state.win) / 2))
+    vim.fn.winrestview({ topline = 1, leftcol = left })
+  end)
 end
 
 function M.close()

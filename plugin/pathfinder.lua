@@ -7,4 +7,4 @@ end, { nargs = '?', complete = 'dir', desc = 'Full-screen repository explorer' }
 
 vim.api.nvim_create_user_command('PathfinderDatabase', function()
   require('pathfinder').database()
-end, { desc = 'Database schema UML (SQLite / PostgreSQL)' })
+end, { desc = 'Database schema and data (SQLite / PostgreSQL / MongoDB)' })

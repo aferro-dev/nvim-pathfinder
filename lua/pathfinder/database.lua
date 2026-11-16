@@ -1,7 +1,7 @@
 local M = {}
 local api = vim.api
 local session
-local tables, connection, project_root
+local tables, connection, project_root, active_connection
 local view = { expanded = {}, hidden = {}, index = 1 }
 local source = debug.getinfo(1, 'S').source:sub(2)
 local scripts = vim.fs.joinpath(vim.fs.dirname(vim.fs.dirname(vim.fs.dirname(source))), 'scripts')
@@ -50,6 +50,12 @@ function M.parse_url(url, root)
   if url:match('^postgres://') or url:match('^postgresql://') then
     return { kind = 'postgres', url = url }
   end
+  if url:match('^mongodb://') or url:match('^mongodb%+srv://') then
+    if not url:match('^mongodb[^:]*://[^/]+/[^?]+') then
+      return nil, 'MongoDB URLs must include a database name: mongodb://host/database'
+    end
+    return { kind = 'mongo', url = url }
+  end
   local path = url:match('^sqlite://(.+)$') or url:match('^sqlite:(.+)$')
   if path then
     if path:find('[?#]') then return nil, 'SQLite URLs accept a file path without query parameters' end
@@ -59,7 +65,7 @@ function M.parse_url(url, root)
     if path:sub(1, 1) ~= '/' then path = vim.fs.joinpath(root or vim.fn.getcwd(), path) end
     return { kind = 'sqlite', path = vim.fs.normalize(path) }
   end
-  return nil, 'Use sqlite:///absolute/path.db, sqlite://relative/path.db, postgres:// or postgresql://'
+  return nil, 'Use sqlite:///absolute/path.db, sqlite://relative/path.db, postgres://, postgresql://, mongodb:// or mongodb+srv://'
 end
 
 function M.connection_error(result, url)
@@ -69,7 +75,7 @@ function M.connection_error(result, url)
     if value and value ~= '' then detail = detail:gsub(value:gsub('([^%w])', '%%%1'), '[redacted]') end
   end
   redact(url)
-  local password = url:match('^postgres[^:]*://[^/@]-:([^@]*)@')
+  local password = url:match('^[%w+]+://[^/@]-:([^@]*)@')
   redact(password)
   if password then redact((password:gsub('%%(%x%x)', function(hex) return string.char(tonumber(hex, 16)) end))) end
   detail = clean(detail):sub(1, 1500)
@@ -146,6 +152,7 @@ function M.close()
   local s = session
   if not s then return end
   session = nil
+  require('pathfinder.database_data').close()
   dismiss_input(s)
   if s.job then s.job:kill(15) end
   if api.nvim_win_is_valid(s.win) then api.nvim_win_close(s.win, true) end
@@ -167,6 +174,10 @@ local function connect(value)
   if parsed.kind == 'sqlite' then
     if vim.fn.executable('python3') ~= 1 then fail('SQLite support requires python3'); return end
     command = { 'python3', vim.fs.joinpath(scripts, 'sqlite_schema.py'), parsed.path }
+  elseif parsed.kind == 'mongo' then
+    if vim.fn.executable('mongosh') ~= 1 then fail('MongoDB support requires mongosh on PATH'); return end
+    command = { 'mongosh', '--quiet', '--norc', parsed.url, '--eval',
+      'print(EJSON.stringify(db.getCollectionNames().filter(n => !n.startsWith("system.")).sort().map(name => ({name, columns:[], foreign_keys:[]}))));' }
   else
     if vim.fn.executable('psql') ~= 1 then fail('PostgreSQL support requires psql on PATH. Restart Neovim from: nix shell nixpkgs#postgresql'); return end
     command = { 'psql', '--dbname', parsed.url, '-X', '-w', '-q', '-A', '-t', '-v', 'ON_ERROR_STOP=1', '-f', vim.fs.joinpath(scripts, 'postgres_schema.sql') }
@@ -189,7 +200,7 @@ local function connect(value)
       local decoded, schema = pcall(vim.json.decode, result.stdout or '')
       if not decoded or type(schema) ~= 'table' then fail('Invalid database schema response'); return end
       if connection ~= value then s.expanded, s.hidden, s.index = {}, {}, 1 end
-      tables, connection = schema, value
+      tables, connection, active_connection = schema, value, parsed
       render()
     end)
   end)
@@ -253,7 +264,7 @@ function M.toggle(opts)
   local root = opts.root or vim.fs.root(api.nvim_buf_get_name(0) ~= '' and api.nvim_buf_get_name(0) or vim.fn.getcwd(), { '.git', '.env' }) or vim.fn.getcwd()
   root = vim.fs.normalize(root)
   if project_root ~= root then
-    tables, connection, project_root = nil, nil, root
+    tables, connection, project_root, active_connection = nil, nil, root, nil
     view = { expanded = {}, hidden = {}, index = 1 }
   end
   require('pathfinder.theme').setup()
@@ -263,7 +274,7 @@ function M.toggle(opts)
   session = { buf = buf, win = win, origin = origin, root = root, expanded = view.expanded, hidden = view.hidden, index = view.index }
   vim.bo[buf].bufhidden, vim.bo[buf].swapfile, vim.bo[buf].filetype = 'wipe', false, 'pathfinder_database'
   vim.wo[win].wrap, vim.wo[win].signcolumn = false, 'no'
-  api.nvim_set_option_value('winbar', ' Database  ·  hjkl move  ·  Enter detail  ·  Space toggle  ·  zR/zM all  ·  H hide/I restore  ·  u URL  ·  R refresh  ·  D files', { win = win, scope = 'local' })
+  api.nvim_set_option_value('winbar', ' Database  ·  hjkl move  ·  Enter detail  ·  v data  ·  Space toggle  ·  zR/zM all  ·  H hide/I restore  ·  u URL  ·  R refresh  ·  D files', { win = win, scope = 'local' })
   api.nvim_set_option_value('winhighlight', 'Normal:PathfinderNormal,NormalFloat:PathfinderNormal,FloatBorder:PathfinderBorder,FloatTitle:Title,FloatFooter:Comment,WinBar:PathfinderNormal,WinBarNC:PathfinderNormal', { win = win, scope = 'local' })
   local function move(delta)
     if #session.positions == 0 then return end
@@ -340,7 +351,11 @@ function M.toggle(opts)
       vim.schedule(function() if s.input and s.input.buf == detail then dismiss_input(s) end end)
     end })
   end
-  for key, action in pairs({ D = M.close, q = M.close, ['<Esc>'] = M.close, ['<C-p>'] = M.close,
+  local function data()
+    if not active_connection or session.loading then return end
+    require('pathfinder.database_data').open({ connection = active_connection, tables = session.visible, index = session.index })
+  end
+  for key, action in pairs({ v = data, D = M.close, q = M.close, ['<Esc>'] = M.close, ['<C-p>'] = M.close,
     u = M.prompt, R = function() if connection then connect(connection) else M.prompt() end end,
     ['<Tab>'] = function() move(1) end, ['<S-Tab>'] = function() move(-1) end,
     h = function() spatial(-1, 0) end, l = function() spatial(1, 0) end,
@@ -360,6 +375,7 @@ function M.toggle(opts)
   end })
   api.nvim_create_autocmd('BufWipeout', { buffer = buf, once = true, callback = function()
     if session and session.buf == buf then
+      require('pathfinder.database_data').close()
       dismiss_input(session)
       if session.job then session.job:kill(15) end
       session = nil

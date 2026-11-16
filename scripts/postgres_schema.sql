@@ -1,7 +1,7 @@
 BEGIN READ ONLY;
 SET LOCAL statement_timeout = '10s';
 SELECT coalesce(json_agg(t ORDER BY t.name), '[]'::json) FROM (
-  SELECT n.nspname || '.' || c.relname AS name,
+  SELECT n.nspname || '.' || c.relname AS name, n.nspname AS "schema", c.relname AS "table",
     coalesce((SELECT json_agg(json_build_object(
       'name', a.attname, 'type', pg_catalog.format_type(a.atttypid, a.atttypmod),
       'nullable', NOT a.attnotnull,

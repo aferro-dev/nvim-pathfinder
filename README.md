@@ -25,6 +25,7 @@ Pathfinder replaces netrw: it opens with `nvim`, `nvim .`, `nvim /path/to/direct
 | `d` | Delete file or directory after confirmation |
 | `D` | Switch to database UML; enter a URL or a project `.env` variable |
 | `I` | Toggle Git-ignored files |
+| `p` | Toggle selected file preview on the right |
 | `R` | Refresh tree, preserving expanded nodes |
 | `q`, `Esc`, `Ctrl-P` | Close Pathfinder and return to the original window |
 
@@ -33,6 +34,8 @@ Pathfinder replaces netrw: it opens with `nvim`, `nvim .`, `nvim /path/to/direct
 The root path appears in the top bar, with shortcuts in the top bar. Long names are shortened, and the viewport follows the selected node. Movements support counts such as `3j` and stop at the boundaries.
 
 Hidden files and Git-ignored files are visible by default; `.git` is always excluded by the default name filter. Press `I` to hide or show Git-ignored entries. The footer displays `ignored: hidden` or `ignored: shown`. Set `gitignore = true` in `setup()` to start with ignored entries hidden. The filter uses Git itself, including nested ignore files, negation rules, repository excludes, and global excludes; tracked files remain visible. Git must be installed for this filter. `R` reloads the ignore rules after edits. Directories load when expanded and appear before files, sorted by name. Symbolic links remain leaf nodes to prevent cycles. Git status indicators are not included.
+
+Press `p` to toggle a narrow preview on the right. It follows the selection without taking focus, shows syntax highlighting and loaded unsaved text, and reads at most 64 KiB / 200 lines from disk. Binary files and directories show a placeholder. The preview starts hidden.
 
 ## Database UML
 
@@ -44,17 +47,37 @@ $DATABASE_URL
 ${DATABASE_URL}
 sqlite:///absolute/path/database.db
 sqlite://relative/database.db
+mongodb://localhost:27017/database
+mongodb+srv://user:password@cluster.example/database
 postgresql://user:password@localhost:5432/database
 postgres://user:password@localhost:5432/database
 ```
 
-`.env` entries can use `export`, single or double quotes, and trailing comments. Values are read literally; shell commands and variable interpolation are not evaluated. Relative SQLite paths resolve from the project root. URL-encode special characters in URLs. SQLite requires an existing file and opens it read-only; PostgreSQL reads metadata in a read-only transaction.
+`.env` entries can use `export`, single or double quotes, and trailing comments. Values are read literally; shell commands and variable interpolation are not evaluated. Relative SQLite paths resolve from the project root. URL-encode special characters in URLs. SQLite requires an existing file and opens it read-only; PostgreSQL reads metadata in a read-only transaction. MongoDB URLs must name a database; the overview lists its accessible collections without inferring relationships.
 
 The database map starts with every table collapsed, occupying one row per table. Spacing between layers and tables expands to use the available window and stays compact when the graph exceeds the viewport. Tables are arranged by their relationships, with directed connectors that remain visible when columns are collapsed. Selected tables and their incoming and outgoing connections are highlighted; other connections stay dim. Parallel foreign keys between the same tables share a connector, with every column mapping available in the detail modal. Large graphs scroll with the selected table. `hjkl` / arrow keys move between tables; `Tab` / `Shift-Tab` select the next or previous table. Enter opens a centered table modal with aligned key, column, type, and nullability fields, plus separate outgoing and incoming relationship sections. The map omits the common `public.` prefix and abbreviates long PostgreSQL type names; the modal retains the full table and column names. Esc or `q` closes the modal. Composite foreign keys show each column mapping, and PostgreSQL table names include their schema.
 
 Space toggles inline columns; `zo` / `zc` expand or collapse a table, and `zR` / `zM` expand or collapse all tables. `H` hides the selected table; `I` restores hidden tables. `R` reloads metadata (and rereads a `.env` variable); `u` opens the connection modal. `D`, `q`, or Esc returns to the file tree. Each view retains its selection and expansion state when switching. Both main views fill the screen without an outer frame; shortcuts appear in the top bar. Connections load asynchronously, and the last successful schema remains available if reconnecting fails. Pathfinder does not write connection details to project files or include credentials in error messages.
 
-SQLite support requires Python 3 with its standard `sqlite3` module; PostgreSQL requires `psql` on `PATH`. The Nixvim module includes both dependencies. Other installations must provide them separately. PostgreSQL password prompts are disabled: supply credentials in the URL or through libpq configuration such as `.pgpass`. Connections time out rather than blocking Neovim.
+SQLite support requires Python 3 with its standard `sqlite3` module; PostgreSQL requires `psql`, and MongoDB requires `mongosh` on `PATH`. The Nixvim module includes all three dependencies. Other installations must provide them separately. PostgreSQL password prompts are disabled: supply credentials in the URL or through libpq configuration such as `.pgpass`. Connections time out rather than blocking Neovim.
+
+## Database data
+
+Press `v` in the database overview to browse the selected table or collection. PostgreSQL, MongoDB (including `mongodb+srv://`), and SQLite are supported. The data view is read-only and fetches 50 records per page asynchronously, with a 15-second client timeout. PostgreSQL queries use a read-only transaction. MongoDB uses `find()` and [canonical Extended JSON](https://www.mongodb.com/docs/mongodb-shell/reference/ejson/stringify/) to retain BSON types such as ObjectId and dates.
+
+| Key | Action |
+| --- | --- |
+| `t` | Choose a table or collection |
+| `Tab` / `Shift-Tab` | Next / previous table or collection |
+| `]` / `[` | Next / previous page |
+| `h/l`, `←/→` | Select previous / next column |
+| `j/k`, `↓/↑` | Select next / previous record |
+| `Enter` | Show the selected record as full JSON; `q` or `Esc` returns |
+| `R` | Reload the current page |
+| `u` | Return to the connection modal |
+| `v`, `q`, `Esc`, `D`, `Ctrl-P` | Return to the database overview |
+
+The selected row and column are highlighted, with a stronger highlight on the active cell and its column header. Movement stays within the records, supports counts such as `3j`, and scrolls to keep the active cell visible. Columns are capped at 32 characters in the grid; the record detail retains full values. MongoDB columns are the union of fields on the current page. Missing fields display `—`, while explicit nulls display `null`. Empty tables and collections remain navigable. Pages sort by PostgreSQL primary keys (or physical row identifiers when there is no primary key), MongoDB `_id`, and SQLite primary keys (or `rowid`). Concurrent database changes can shift records between pages; each page is a separate read. Connection URLs and `.env` variables use the same modal as the schema view.
 
 ## File actions
 
@@ -109,6 +132,8 @@ nvim --headless -u NONE -l tests/grid.lua
 nvim --headless -u NONE -l tests/actions.lua
 nvim --headless -u NONE -l tests/gitignore.lua
 nvim --headless -u NONE -l tests/database.lua
+nvim --headless -u NONE -l tests/database_data.lua
 nvim --headless -u NONE -l tests/theme.lua
+nvim --headless -u NONE -l tests/preview.lua
 python3 tests/startup.py
 ```

@@ -147,10 +147,18 @@ local function connector(column, row)
   return ' │ '
 end
 
+local function dimensions()
+  local width = math.max(1, vim.o.columns)
+  if state and state.preview_enabled then width = width - require('pathfinder.preview').width() end
+  return { relative = 'editor', row = 0, col = 0, width = width,
+    height = math.max(1, vim.o.lines - vim.o.cmdheight), style = 'minimal', border = 'none', zindex = 50 }
+end
+
 local function render(target)
   local s = state
   local selected = s.nodes[target] or (s.selected and s.nodes[s.selected.path]) or s.columns[1][1]
   s.selected = selected
+  api.nvim_win_set_config(s.win, dimensions())
   local height = api.nvim_win_get_height(s.win)
   local width = api.nvim_win_get_width(s.win)
   local map_width = 0
@@ -217,6 +225,15 @@ local function render(target)
   vim.bo[s.buf].modifiable = false
   api.nvim_win_set_cursor(s.win, { selected.row, selected.cursor_col })
   api.nvim_win_call(s.win, function() vim.fn.winrestview({ topline = 1 }) end)
+  if s.preview_enabled then require('pathfinder.preview').show(s.selected) end
+end
+
+function M.toggle_preview()
+  local node = current()
+  if not node then return end
+  state.preview_enabled = not state.preview_enabled
+  if not state.preview_enabled then require('pathfinder.preview').close() end
+  render(node.path)
 end
 
 function M.center()
@@ -230,6 +247,7 @@ function M.close()
   local s = state
   if not s then return end
   state = nil
+  require('pathfinder.preview').close()
   if api.nvim_win_is_valid(s.win) then api.nvim_win_close(s.win, true) end
   if api.nvim_buf_is_valid(s.buf) then api.nvim_buf_delete(s.buf, { force = true }) end
   if api.nvim_win_is_valid(s.origin) then api.nvim_set_current_win(s.origin) end
@@ -448,11 +466,6 @@ function M.delete()
   end)
 end
 
-local function dimensions()
-  return { relative = 'editor', row = 0, col = 0, width = math.max(1, vim.o.columns),
-    height = math.max(1, vim.o.lines - vim.o.cmdheight), style = 'minimal', border = 'none', zindex = 50 }
-end
-
 function M.toggle_gitignore()
   local node = current()
   if not node then return end
@@ -488,7 +501,7 @@ function M.open(opts)
   vim.bo[buf].swapfile = false
   require('pathfinder.theme').setup()
   local display_root = vim.fn.fnamemodify(root, ':~'):gsub('%%', '%%%%'):gsub('%%c', ' ')
-  api.nvim_set_option_value('winbar', '%=%#PathfinderSelectedEdge#%#PathfinderBadge# 󰉋 pathfinder %#PathfinderSelectedEdge#%#PathfinderNormal#  %#PathfinderMuted#' .. display_root .. '  D database  ·  zR/zM expand/collapse all  ·  q close%=', { win = win, scope = 'local' })
+  api.nvim_set_option_value('winbar', '%=%#PathfinderSelectedEdge#%#PathfinderBadge# 󰉋 pathfinder %#PathfinderSelectedEdge#%#PathfinderNormal#  %#PathfinderMuted#' .. display_root .. '  p preview  ·  D database  ·  zR/zM expand/collapse all  ·  q close%=', { win = win, scope = 'local' })
   api.nvim_set_option_value('winhighlight', 'Normal:PathfinderNormal,NormalFloat:PathfinderNormal,FloatBorder:PathfinderBorder,WinBar:PathfinderNormal,WinBarNC:PathfinderNormal', { win = win, scope = 'local' })
   vim.wo[win].fillchars = 'eob: '
   vim.wo[win].cursorline = false
@@ -507,7 +520,7 @@ function M.open(opts)
     zc = function() M.set_expanded(false) end,
     zR = M.expand_all, zM = M.collapse_all, zz = M.center,
     a = M.create, d = M.delete, I = M.toggle_gitignore,
-    D = M.database,
+    D = M.database, p = M.toggle_preview,
 
   }
   local descriptions = {
@@ -520,7 +533,7 @@ function M.open(opts)
     R = 'Refresh tree', zo = 'Expand node', zc = 'Collapse node',
     zR = 'Expand all nodes', zM = 'Collapse all nodes', zz = 'Center selected node',
     a = 'Create file or directory', d = 'Delete file or directory', I = 'Toggle Git-ignored files',
-    D = 'Switch to database UML',
+    D = 'Switch to database UML', p = 'Toggle file preview',
   }
   for key, action in pairs(maps) do
     vim.keymap.set('n', key, action, { buffer = buf, silent = true, nowait = true, desc = descriptions[key] })
@@ -533,7 +546,10 @@ function M.open(opts)
     end
   end })
   api.nvim_create_autocmd('BufWipeout', { buffer = buf, once = true, callback = function()
-    if state and state.buf == buf then state = nil end
+    if state and state.buf == buf then
+      require('pathfinder.preview').close()
+      state = nil
+    end
   end })
   update_gitignore()
   local node = state.root

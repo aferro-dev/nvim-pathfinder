@@ -12,6 +12,10 @@ function M.apply()
     PathfinderBorder = 'WinSeparator',
     PathfinderMuted = 'Comment',
     PathfinderKey = 'Special',
+    PathfinderDataRow = 'CursorLine',
+    PathfinderDataColumn = 'CursorColumn',
+    PathfinderDataCell = 'Visual',
+    PathfinderDataHeader = 'IncSearch',
   }
   for name, target in pairs(links) do
     vim.api.nvim_set_hl(0, name, { default = true, link = target })

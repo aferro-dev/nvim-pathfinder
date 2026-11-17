@@ -7,6 +7,35 @@ local selection_ns = api.nvim_create_namespace('pathfinder_database_data_selecti
 
 local function clean(value) return tostring(value):gsub('%c', ' ') end
 
+-- Keep numeric BSON payloads as strings to preserve int64/decimal precision.
+function M.readable(value)
+  if value == vim.NIL or type(value) ~= 'table' then return value end
+  local key, payload = next(value)
+  if key and next(value, key) == nil then
+    if key == '$oid' or key == '$numberInt' or key == '$numberLong' or key == '$numberDouble' or key == '$numberDecimal' then
+      return tostring(payload)
+    elseif key == '$date' then
+      if type(payload) == 'string' then return payload end
+      local ms = tonumber(type(payload) == 'table' and payload['$numberLong'] or payload)
+      if ms then
+        local seconds = math.floor(ms / 1000)
+        local ok, date = pcall(os.date, '!%Y-%m-%dT%H:%M:%S', seconds)
+        if ok and date then return date .. string.format('.%03dZ', ms - seconds * 1000) end
+      end
+    elseif key == '$binary' and type(payload) == 'table' then
+      return 'Binary(' .. tostring(payload.subType) .. '): ' .. tostring(payload.base64)
+    elseif key == '$regularExpression' and type(payload) == 'table' then
+      return '/' .. tostring(payload.pattern) .. '/' .. tostring(payload.options)
+    elseif key == '$timestamp' and type(payload) == 'table' then
+      return 'Timestamp(' .. tostring(payload.t) .. ', ' .. tostring(payload.i) .. ')'
+    elseif key == '$minKey' then return 'MinKey'
+    elseif key == '$maxKey' then return 'MaxKey' end
+  end
+  local result = vim.islist(value) and {} or vim.empty_dict()
+  for name, entry in pairs(value) do result[name] = M.readable(entry) end
+  return result
+end
+
 local function cell(value)
   if value == vim.NIL then return 'null' end
   if value == nil then return '—' end
@@ -47,7 +76,12 @@ function M.pretty(value)
   return vim.split(table.concat(out), '\n', { plain = true })
 end
 
-function M.grid(tbl, rows)
+function M.grid(tbl, rows, database_kind)
+  if database_kind == 'mongo' then
+    local readable = {}
+    for i, row in ipairs(rows) do readable[i] = M.readable(row) end
+    rows = readable
+  end
   local columns, seen = {}, {}
   for _, column in ipairs(tbl.columns or {}) do
     columns[#columns + 1], seen[column.name] = column.name, true
@@ -60,29 +94,44 @@ function M.grid(tbl, rows)
   vim.list_extend(columns, extra)
   local widths = {}
   for i, name in ipairs(columns) do
-    widths[i] = math.min(32, math.max(6, vim.fn.strdisplaywidth(clean(name))))
-    for _, row in ipairs(rows) do widths[i] = math.min(32, math.max(widths[i], vim.fn.strdisplaywidth(cell(row[name])))) end
+    widths[i] = math.min(24, math.max(6, vim.fn.strdisplaywidth(clean(name))))
+    for _, row in ipairs(rows) do widths[i] = math.min(24, math.max(widths[i], vim.fn.strdisplaywidth(cell(row[name])))) end
   end
-  local cells = {}
+  local cells, marks = {}, {}
+  local function value_group(value, name)
+    if value == nil or value == vim.NIL then return 'PathfinderDataNull' end
+    if name == '_id' or name:match('Id$') then return 'PathfinderDataId' end
+    if type(value) == 'boolean' then return 'PathfinderDataBoolean' end
+    if type(value) == 'number' or type(value) == 'string' and tonumber(value) then return 'PathfinderDataNumber' end
+    if type(value) == 'table' then return 'PathfinderDataObject' end
+    if type(value) == 'string' and value:match('^%d%d%d%d%-%d%d%-%d%dT') then return 'PathfinderDataDate' end
+    return 'PathfinderDataText'
+  end
   local function line(row, header)
-    local text, ranges, screen_col = '  ', {}, 2
+    local text, ranges, screen_col = '   ', {}, 3
     for i, name in ipairs(columns) do
       local value = fit(header and name or cell(row[name]), widths[i])
       ranges[i] = { start = #text, finish = #text + #value, left = screen_col, right = screen_col + widths[i] }
+      marks[#marks + 1] = { row = header and 0 or #cells + 1, start = #text, finish = #text + #value,
+        group = header and 'PathfinderDataHeading' or value_group(row[name], name) }
       text = text .. value
       screen_col = screen_col + widths[i]
-      if i < #columns then text = text .. ' │ '; screen_col = screen_col + 3 end
+      if i < #columns then
+        marks[#marks + 1] = { row = header and 0 or #cells + 1, start = #text + 2, finish = #text + 5, group = 'PathfinderDataBorder' }
+        text = text .. '  │  '; screen_col = screen_col + 5
+      end
     end
+    text = text .. '   '
     cells[#cells + 1] = ranges
     return text
   end
   local lines = { line(nil, true) }
   local rules = {}
   for i, width in ipairs(widths) do rules[i] = string.rep('─', width) end
-  lines[2] = '  ' .. table.concat(rules, '─┼─')
+  lines[2] = '   ' .. table.concat(rules, '──┼──') .. '   '
   for _, row in ipairs(rows) do lines[#lines + 1] = line(row) end
   if #rows == 0 then lines[#lines + 1] = '  No records on this page.' end
-  return lines, { columns = columns, cells = cells }
+  return lines, { columns = columns, cells = cells, marks = marks }
 end
 
 local function dimensions()
@@ -108,7 +157,7 @@ local function select_cell()
       end_col = range.finish,
       hl_group = i == 1 and 'PathfinderDataHeader' or i == s.row + 1 and 'PathfinderDataCell' or 'PathfinderDataColumn',
       priority = (i == 1 or i == s.row + 1) and 130 or 110,
-      hl_mode = 'replace',
+      hl_mode = 'combine',
     })
   end
   local range = s.grid.cells[s.row + 1][s.column]
@@ -130,14 +179,14 @@ local function render()
   if not s or not api.nvim_buf_is_valid(s.buf) then return end
   local tbl = s.tables[s.index]
   local title = tbl and clean(tbl.name) or 'No tables or collections'
-  local lines = { '  ' .. title .. '  [' .. (#s.tables == 0 and 0 or s.index) .. '/' .. #s.tables .. ']  ·  Page ' .. (s.page + 1)
+  local lines = { '   ' .. title .. '  [' .. (#s.tables == 0 and 0 or s.index) .. '/' .. #s.tables .. ']  ·  Page ' .. (s.page + 1)
     .. '  ·  ' .. #s.rows .. ' records' .. (s.has_next and '  ·  more →' or ''), '' }
   s.grid = nil
   if s.loading then lines[#lines + 1] = '  Loading…'
   elseif s.error then lines[#lines + 1] = '  ' .. s.error
   elseif tbl then
     local grid
-    grid, s.grid = M.grid(tbl, s.rows)
+    grid, s.grid = M.grid(tbl, s.rows, s.connection.kind)
     vim.list_extend(lines, grid)
   end
   vim.bo[s.buf].modifiable = true
@@ -146,7 +195,18 @@ local function render()
   api.nvim_buf_clear_namespace(s.buf, ns, 0, -1)
   api.nvim_buf_set_extmark(s.buf, ns, 0, 0, { end_col = #lines[1], hl_group = 'Title' })
   if not s.loading and not s.error and tbl then
-    api.nvim_buf_set_extmark(s.buf, ns, 2, 0, { end_col = #lines[3], hl_group = 'Title' })
+    api.nvim_buf_set_extmark(s.buf, ns, 2, 0, { line_hl_group = 'PathfinderDataHeading', priority = 40 })
+    api.nvim_buf_set_extmark(s.buf, ns, 3, 0, { end_col = #lines[4], hl_group = 'PathfinderDataBorder', priority = 60 })
+    for row = 1, #s.rows do
+      if row % 2 == 0 then
+        api.nvim_buf_set_extmark(s.buf, ns, row + 3, 0, { line_hl_group = 'PathfinderDataStripe', priority = 40 })
+      end
+    end
+    for _, mark in ipairs(s.grid.marks) do
+      api.nvim_buf_set_extmark(s.buf, ns, mark.row + 2, mark.start, {
+        end_col = mark.finish, hl_group = mark.group, priority = 60,
+      })
+    end
     api.nvim_win_set_cursor(s.win, { #s.rows > 0 and 5 or 3, 0 })
   end
   api.nvim_win_call(s.win, function() vim.fn.winrestview({ topline = 1, leftcol = 0 }) end)
@@ -215,15 +275,29 @@ local function details()
   if s.loading or s.error or not row then return end
   local buf = api.nvim_create_buf(false, true)
   vim.bo[buf].bufhidden, vim.bo[buf].swapfile = 'wipe', false
-  api.nvim_buf_set_lines(buf, 0, -1, false, M.pretty(row))
+  local mongo, raw = s.connection.kind == 'mongo', false
+  local function write_record()
+    vim.bo[buf].modifiable = true
+    api.nvim_buf_set_lines(buf, 0, -1, false, M.pretty(mongo and not raw and M.readable(row) or row))
+    vim.bo[buf].modifiable = false
+  end
+  write_record()
   vim.bo[buf].modifiable, vim.bo[buf].filetype = false, 'json'
   local function layout()
-    local w, h = math.max(1, math.min(100, vim.o.columns - 6)), math.max(1, vim.o.lines - vim.o.cmdheight - 6)
-    return { relative = 'editor', row = 2, col = math.max(0, math.floor((vim.o.columns - w - 2) / 2)),
+    local w, h = math.max(1, math.min(100, vim.o.columns - 6)), math.max(1, math.min(30, vim.o.lines - vim.o.cmdheight - 6))
+    return { relative = 'editor', row = math.max(0, math.floor((vim.o.lines - vim.o.cmdheight - h - 2) / 2)), col = math.max(0, math.floor((vim.o.columns - w - 2) / 2)),
       width = w, height = h, border = 'rounded', style = 'minimal', zindex = 75,
-      title = ' Record · JSON ', footer = ' Esc/q: back ' }
+      title = mongo and (raw and ' Record · BSON / Extended JSON ' or ' Record · readable BSON ') or ' Record · JSON ',
+      footer = mongo and ' Esc/q: back · r: readable/raw · hjkl: scroll ' or ' Esc/q: back · hjkl: scroll ' }
   end
   s.detail = api.nvim_open_win(buf, true, layout())
+  if mongo then
+    vim.keymap.set('n', 'r', function()
+      raw = not raw
+      write_record()
+      api.nvim_win_set_config(s.detail, layout())
+    end, { buffer = buf, silent = true })
+  end
   vim.wo[s.detail].wrap = true
   vim.wo[s.detail].winhighlight = 'Normal:PathfinderNormal,NormalFloat:PathfinderNormal,FloatBorder:PathfinderBorder'
   for _, key in ipairs({ 'q', '<Esc>', '<CR>' }) do
@@ -245,8 +319,8 @@ function M.open(opts)
   require('pathfinder.theme').setup()
   vim.bo[buf].bufhidden, vim.bo[buf].swapfile, vim.bo[buf].filetype = 'wipe', false, 'pathfinder_database_data'
   vim.wo[win].wrap, vim.wo[win].cursorline, vim.wo[win].sidescrolloff = false, false, 0
-  vim.wo[win].winhighlight = 'Normal:PathfinderNormal,NormalFloat:PathfinderNormal,WinBar:PathfinderNormal'
-  vim.wo[win].winbar = ' Data · hjkl/↑↓←→: cells · t: select · Tab/Shift-Tab: table/collection · [/]: page · Enter: record · R: refresh · v/q: schema · u: URL'
+  vim.wo[win].winhighlight = 'Normal:PathfinderNormal,NormalFloat:PathfinderNormal,FloatBorder:PathfinderBorder,FloatTitle:Title,FloatFooter:Comment'
+  vim.wo[win].winbar = '   Data · hjkl/↑↓←→: cells · Enter: record · Tab: collection · [/]: page · t: select · R: reload · q: back'
   local function table_move(delta)
     local index = math.max(1, math.min(#s.tables, s.index + delta))
     if index == s.index then return end
@@ -270,6 +344,10 @@ function M.open(opts)
     j = function() move(0, 1) end, k = function() move(0, -1) end,
     ['<Left>'] = function() move(-1, 0) end, ['<Right>'] = function() move(1, 0) end,
     ['<Down>'] = function() move(0, 1) end, ['<Up>'] = function() move(0, -1) end,
+    ['<C-d>'] = function() move(0, math.max(1, math.floor(api.nvim_win_get_height(s.win) / 2))) end,
+    ['<C-u>'] = function() move(0, -math.max(1, math.floor(api.nvim_win_get_height(s.win) / 2))) end,
+    ['<ScrollWheelDown>'] = function() move(0, 3) end,
+    ['<ScrollWheelUp>'] = function() move(0, -3) end,
     ['<Tab>'] = function() table_move(1) end, ['<S-Tab>'] = function() table_move(-1) end,
     [']'] = function() page_move(1) end, ['['] = function() page_move(-1) end,
     t = function()

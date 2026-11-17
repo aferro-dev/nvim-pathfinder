@@ -177,7 +177,7 @@ local function connect(value)
   elseif parsed.kind == 'mongo' then
     if vim.fn.executable('mongosh') ~= 1 then fail('MongoDB support requires mongosh on PATH'); return end
     command = { 'mongosh', '--quiet', '--norc', parsed.url, '--eval',
-      'print(EJSON.stringify(db.getCollectionNames().filter(n => !n.startsWith("system.")).sort().map(name => ({name, columns:[], foreign_keys:[]}))));' }
+      table.concat(vim.fn.readfile(vim.fs.joinpath(scripts, 'mongo_schema.js')), '\n') }
   else
     if vim.fn.executable('psql') ~= 1 then fail('PostgreSQL support requires psql on PATH. Restart Neovim from: nix shell nixpkgs#postgresql'); return end
     command = { 'psql', '--dbname', parsed.url, '-X', '-w', '-q', '-A', '-t', '-v', 'ON_ERROR_STOP=1', '-f', vim.fs.joinpath(scripts, 'postgres_schema.sql') }
@@ -312,7 +312,7 @@ function M.toggle(opts)
     local s = session
     local tbl = s.visible[s.index]
     if not tbl then return end
-    local lines = require('pathfinder.database_graph').details(tbl, tables or {})
+    local lines = require('pathfinder.database_graph').details(tbl, tables or {}, active_connection and active_connection.kind)
     local detail = api.nvim_create_buf(false, true)
     vim.bo[detail].bufhidden, vim.bo[detail].swapfile = 'wipe', false
     api.nvim_buf_set_lines(detail, 0, -1, false, lines)
@@ -325,13 +325,13 @@ function M.toggle(opts)
       return { relative = 'editor', row = math.max(0, math.floor((vim.o.lines - h - 2) / 2)),
         col = math.max(0, math.floor((vim.o.columns - w - 2) / 2)), width = w, height = h,
         style = 'minimal', border = 'rounded', zindex = 70,
-        title = ' ' .. clean(tbl.name) .. ' ', title_pos = 'center', footer = ' Esc/q: back · hjkl: scroll ', footer_pos = 'center' }
+        title = ' ' .. clean(tbl.name) .. ' ', title_pos = 'center', footer = ' Esc/q: back · v: data · hjkl: scroll ', footer_pos = 'center' }
     end
     local detail_win = api.nvim_open_win(detail, true, layout())
     s.input = { buf = detail, win = detail_win }
     local detail_ns = api.nvim_create_namespace('pathfinder_database_detail')
     for row, line in ipairs(lines) do
-      local group = row == 1 and 'Title' or row == 3 and 'Title' or line:find('REFERENC', 1, true) and 'DiagnosticInfo'
+      local group = row == 1 and 'Title' or row == 3 and 'Title' or (line:find('REFERENC', 1, true) or line == '  FIELDS / BSON TYPES' or line == '  INDEXES') and 'DiagnosticInfo'
       if group then api.nvim_buf_set_extmark(detail, detail_ns, row - 1, 0, { end_col = #line, hl_group = group }) end
       if row > 4 and line:find('  ', 1, true) == 1 and (line:find('PK', 1, true) == 3 or line:find('FK', 1, true) == 3) then
         api.nvim_buf_set_extmark(detail, detail_ns, row - 1, 2, { end_col = 7, hl_group = 'DiagnosticInfo' })
@@ -344,6 +344,12 @@ function M.toggle(opts)
     for _, key in ipairs({ '<Esc>', 'q', '<CR>', '<BS>', '-' }) do
       vim.keymap.set('n', key, function() dismiss_input(s) end, { buffer = detail, silent = true })
     end
+    vim.keymap.set('n', 'v', function()
+      dismiss_input(s)
+      if active_connection then
+        require('pathfinder.database_data').open({ connection = active_connection, tables = s.visible, index = s.index })
+      end
+    end, { buffer = detail, silent = true })
     api.nvim_create_autocmd('VimResized', { buffer = detail, callback = function()
       if api.nvim_win_is_valid(detail_win) then api.nvim_win_set_config(detail_win, layout()) end
     end })

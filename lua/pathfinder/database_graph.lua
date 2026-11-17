@@ -71,9 +71,7 @@ function M.render(schema, viewport, expanded, selected, viewport_height)
           width = math.min(48, math.max(width, vim.fn.strdisplaywidth(text) + 4))
         end
       end
-      local self_reference = false
-      for _, fk in ipairs(tbl.foreign_keys) do if fk.target_table == tbl.name then self_reference = true end end
-      boxes[i] = { title = title, fields = fields, height = #fields > 0 and #fields + 4 or 1, gap = (#fields > 0 or self_reference) and 1 or 0 }
+      boxes[i] = { title = title, fields = fields, height = #fields > 0 and #fields + 4 or 3, gap = 1 }
       widths[depth] = math.max(widths[depth], width)
       heights[depth] = heights[depth] + boxes[i].height + boxes[i].gap
     end
@@ -162,13 +160,15 @@ function M.render(schema, viewport, expanded, selected, viewport_height)
     end
   end
   for i, box in ipairs(boxes) do
-    local group = i == selected and 'PathfinderSelected' or related[i] and 'DiagnosticInfo' or 'Normal'
+    local group = i == selected and 'PathfinderSelected' or related[i] and 'DiagnosticInfo' or 'PathfinderBorder'
+    local title_group = i == selected and 'PathfinderDatabaseSelected' or 'PathfinderDatabaseTitle'
     local w = box.width - 2
     if box.height == 1 then
       text(box.x, box.y, '│ ' .. fit(box.title, w - 2) .. ' │', group)
     else
       text(box.x, box.y, '╭' .. string.rep('─', w) .. '╮', group)
       text(box.x, box.y + 1, '│ ' .. fit(box.title, w - 2) .. ' │', group)
+      text(box.x + 2, box.y + 1, fit(box.title, w - 2), title_group)
       local y = box.y + 2
       if #box.fields > 0 then
         text(box.x, y, '├' .. string.rep('─', w) .. '┤', group); y = y + 1
@@ -204,7 +204,26 @@ function M.render(schema, viewport, expanded, selected, viewport_height)
   return lines, positions, marks
 end
 
-function M.details(tbl, schema)
+function M.details(tbl, schema, database_kind)
+  if database_kind == 'mongo' then
+    local lines = { '  ' .. clean(tbl.name), '', '  COLLECTION · MongoDB',
+      '  Fields observed in ' .. tostring(tbl.sample_size or 0) .. ' documents (limit 50).',
+      '  Sampled types are not schema constraints.', '', '  FIELDS / BSON TYPES' }
+    for _, col in ipairs(tbl.columns) do
+      lines[#lines + 1] = '  ' .. clean(col.name) .. '  :  ' .. clean(col.type)
+    end
+    if #tbl.columns == 0 then lines[#lines + 1] = '  No fields observed; the collection may be empty.' end
+    lines[#lines + 1] = ''
+    lines[#lines + 1] = '  INDEXES'
+    for _, index in ipairs(tbl.indexes or {}) do
+      lines[#lines + 1] = '  ' .. clean(index.name) .. (index.unique and ' [unique]' or '')
+      lines[#lines + 1] = '    ' .. clean(index.keys)
+    end
+    if #(tbl.indexes or {}) == 0 then lines[#lines + 1] = '  No indexes.' end
+    lines[#lines + 1] = ''
+    lines[#lines + 1] = '  v: browse documents'
+    return lines
+  end
   local foreign, name_width, type_width = {}, 6, 4
   for _, fk in ipairs(tbl.foreign_keys) do foreign[fk.column] = true end
   for _, col in ipairs(tbl.columns) do name_width = math.max(name_width, vim.fn.strdisplaywidth(clean(col.name))) end

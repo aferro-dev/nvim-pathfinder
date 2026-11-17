@@ -13,15 +13,48 @@ function M.apply()
     PathfinderMuted = 'Comment',
     PathfinderKey = 'Special',
     PathfinderDataRow = 'CursorLine',
-    PathfinderDataColumn = 'CursorColumn',
-    PathfinderDataCell = 'Visual',
-    PathfinderDataHeader = 'IncSearch',
+    PathfinderDataId = 'Comment',
+    PathfinderDataDate = 'Special',
+    PathfinderDataNumber = 'Number',
+    PathfinderDataBoolean = 'Boolean',
+    PathfinderDataNull = 'Comment',
+    PathfinderDataObject = 'Type',
+    PathfinderDataBorder = 'NonText',
   }
   for name, target in pairs(links) do
     vim.api.nvim_set_hl(0, name, { default = true, link = target })
   end
+  for name, target in pairs({ PathfinderDatabaseTitle = 'Title', PathfinderDatabaseSelected = 'PathfinderSelected' }) do
+    local hl = vim.api.nvim_get_hl(0, { name = target, link = false })
+    hl.bold = true
+    hl.default = true
+    vim.api.nvim_set_hl(0, name, hl)
+  end
   local normal = vim.api.nvim_get_hl(0, { name = 'Normal', link = false })
   local canvas = vim.api.nvim_get_hl(0, { name = 'PathfinderNormal', link = false })
+  local function blend(a, b, weight)
+    local result = 0
+    for _, shift in ipairs({ 16, 8, 0 }) do
+      local channel = math.floor(bit.band(bit.rshift(a, shift), 255) * (1 - weight)
+        + bit.band(bit.rshift(b, shift), 255) * weight + 0.5)
+      result = result + bit.lshift(channel, shift)
+    end
+    return result
+  end
+  local bg, fg = canvas.bg or normal.bg or 0x151820, canvas.fg or normal.fg or 0xd8dee9
+  local info = vim.api.nvim_get_hl(0, { name = 'DiagnosticInfo', link = false })
+  local accent = info.fg or 0x61afef
+  for name, hl in pairs({
+    PathfinderDataText = { fg = fg },
+    PathfinderDataStripe = { bg = blend(bg, fg, 0.035), ctermbg = 235 },
+    PathfinderDataRow = { bg = blend(bg, accent, 0.13), ctermbg = 236 },
+    PathfinderDataColumn = { bg = blend(bg, accent, 0.10), ctermbg = 235 },
+    PathfinderDataHeading = { fg = accent, bg = blend(bg, accent, 0.08), bold = true, ctermfg = 81, ctermbg = 235 },
+    PathfinderDataHeader = { fg = accent, bg = blend(bg, accent, 0.22), bold = true, underline = true, ctermfg = 81, ctermbg = 24 },
+    PathfinderDataCell = { fg = bg, bg = accent, bold = true, underline = true, ctermfg = 16, ctermbg = 81 },
+  }) do
+    vim.api.nvim_set_hl(0, name, hl)
+  end
   for name, surface in pairs({
     PathfinderDirectoryEdge = 'PathfinderDirectory',
     PathfinderAncestorEdge = 'PathfinderAncestor',

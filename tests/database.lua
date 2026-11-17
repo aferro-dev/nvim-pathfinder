@@ -13,8 +13,8 @@ local large = {}
 for i = 1, 30 do large[i] = { name = 'public.table_' .. i, columns = { { name = 'id', type = 'uuid', pk = true } }, foreign_keys = {} } end
 local overview, locations = db.diagram(large, 120)
 assert(#locations == 30)
-assert(#overview <= 30)
-for _, node in ipairs(locations) do assert(node.top == node.bottom) end
+assert(#overview <= 120)
+for _, node in ipairs(locations) do assert(node.bottom - node.top == 2) end
 
 local narrow = db.diagram(large, 25)
 assert(#narrow > 0)
@@ -37,11 +37,23 @@ assert(active)
 local detail = table.concat(require('pathfinder.database_graph').details(connected[2], connected), '\n')
 assert(detail:find('REFERENCES', 1, true) and detail:find('REFERENCED BY', 1, true))
 assert(detail:find('parent_id → parents.id', 1, true))
+local mongo_detail = table.concat(require('pathfinder.database_graph').details({
+  name = 'meal', columns = { { name = '_id', type = 'objectId' }, { name = 'amount', type = 'double | int' } },
+  foreign_keys = {}, sample_size = 12,
+  indexes = { { name = '_id_', unique = true, keys = '_id: 1' } },
+}, {}, 'mongo'), '\n')
+assert(mongo_detail:find('12 documents', 1, true))
+assert(mongo_detail:find('double | int', 1, true))
+assert(mongo_detail:find('_id_ [unique]', 1, true))
+assert(not mongo_detail:find('REFERENCES', 1, true))
+assert(not mongo_detail:find('NULL', 1, true))
+local empty_mongo = table.concat(require('pathfinder.database_graph').details({ name = 'empty', columns = {} }, {}, 'mongo'), '\n')
+assert(empty_mongo:find('No fields observed', 1, true))
 local expanded_graph = table.concat(db.diagram(connected, 100, { ['public.children'] = true }, 2), '\n')
 assert(expanded_graph:find('FK parent_id', 1, true))
 assert(expanded_graph:find('▲', 1, true))
-local distributed, spread_nodes = db.diagram(large, 200, {}, 1, 80)
-assert(#distributed >= 65 and #distributed <= 80)
+local distributed, spread_nodes = db.diagram(large, 200, {}, 1, 160)
+assert(#distributed >= 130 and #distributed <= 160)
 for i = 2, #spread_nodes do assert(spread_nodes[i].top > spread_nodes[i - 1].bottom) end
 local wide_graph, wide_nodes = db.diagram(connected, 200, {}, 2, 80)
 assert(math.abs(wide_nodes[1].col - wide_nodes[2].col) > 120)

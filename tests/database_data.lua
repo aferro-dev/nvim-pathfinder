@@ -16,6 +16,24 @@ assert(vim.deep_equal(vim.json.decode(table.concat(data.pretty(nested), '\n')), 
 local grid = table.concat(data.grid({ columns = {} }, { { a = vim.NIL, text = 'hello\nworld' }, { b = 42 } }), '\n')
 assert(grid:find('null', 1, true) and grid:find('—', 1, true) and grid:find('hello world', 1, true))
 
+local bson = {
+  id = { ['$oid'] = '0123456789abcdef01234567' },
+  date = { ['$date'] = { ['$numberLong'] = '0' } },
+  before = { ['$date'] = { ['$numberLong'] = '-1' } },
+  big = { ['$numberLong'] = '9223372036854775807' },
+  nested = { { amount = { ['$numberDecimal'] = '123.4500' }, null = vim.NIL } },
+}
+local readable = data.readable(bson)
+assert(readable.id == '0123456789abcdef01234567')
+assert(readable.date == '1970-01-01T00:00:00.000Z')
+assert(readable.before == '1969-12-31T23:59:59.999Z')
+assert(readable.big == '9223372036854775807')
+assert(readable.nested[1].amount == '123.4500' and readable.nested[1].null == vim.NIL)
+assert(bson.id['$oid']) -- raw BSON remains available
+local readable_grid = table.concat(data.grid({ columns = {} }, { bson }, 'mongo'), '\n')
+assert(not readable_grid:find('$number', 1, true))
+assert(readable_grid:find('1970-01-01', 1, true))
+
 -- Exercise real SQLite reads, pagination, detail, selection, and lifecycle.
 local root = vim.fn.tempname()
 vim.fn.mkdir(root, 'p')
@@ -33,6 +51,9 @@ local tables = { { name = 'records', columns = { { name = 'id', pk = true }, { n
 local origin = api.nvim_get_current_win()
 data.open({ connection = { kind = 'sqlite', path = path }, tables = tables })
 wait_for('value 1')
+local config = api.nvim_win_get_config(0)
+assert(config.border == 'none' and config.width == vim.o.columns)
+assert(config.height == vim.o.lines - vim.o.cmdheight)
 assert(content():find('50 records', 1, true) and content():find('null', 1, true))
 local function cursor() return api.nvim_win_get_cursor(0) end
 local selection_ns = api.nvim_get_namespaces().pathfinder_database_data_selection
@@ -41,11 +62,11 @@ local function highlighted(group, row)
     if mark[2] == row and (mark[4].hl_group == group or mark[4].line_hl_group == group) then return mark end
   end
 end
-assert(cursor()[1] == 5 and cursor()[2] == 2)
+assert(cursor()[1] == 5 and cursor()[2] == 3)
 assert(highlighted('PathfinderDataRow', 4) and highlighted('PathfinderDataCell', 4))
 local first_header = assert(highlighted('PathfinderDataHeader', 2))
 key('<Right>')
-assert(cursor()[1] == 5 and cursor()[2] > 2)
+assert(cursor()[1] == 5 and cursor()[2] > 3)
 local value_col = cursor()[2]
 assert(api.nvim_get_current_line():sub(value_col + 1):find('value 1', 1, true) == 1)
 assert(highlighted('PathfinderDataHeader', 2)[3] > first_header[3])
@@ -59,7 +80,7 @@ key('q')
 key('l'); local last_col = cursor()[2]; key('l')
 assert(cursor()[2] == last_col) -- stop at the final column
 key('h'); key('<Left>'); key('h')
-assert(cursor()[2] == 2 and cursor()[1] == 6)
+assert(cursor()[2] == 3 and cursor()[1] == 6)
 key('k'); key('<Up>')
 assert(cursor()[1] == 5) -- headers cannot be selected
 vim.cmd('normal 3j')
@@ -99,7 +120,7 @@ assert(api.nvim_get_current_line():sub(narrow_col + 1):find('null', 1, true) == 
 local leftcol = api.nvim_win_call(0, function() return vim.fn.winsaveview().leftcol end)
 assert(leftcol > 0)
 key('h'); key('h')
-assert(cursor()[2] == 2)
+assert(cursor()[2] == 3)
 data.close()
 local unicode_lines, unicode_grid = data.grid({ columns = { { name = '名前' }, { name = 'emoji' } } },
   { { ['名前'] = '日本語', emoji = '🙂' } })
@@ -135,9 +156,13 @@ key('<Tab>')
 assert(killed == 1)
 callbacks[1]({ code = 0, stdout = '[{"stale":"must not appear"}]' })
 callbacks[2]({ code = 0, stdout = '[{"_id":{"$oid":"abc"},"nested":{"ok":true}}]' })
-wait_for('$oid')
+wait_for('abc')
+assert(not content():find('$oid', 1, true))
 assert(not content():find('must not appear', 1, true))
-key('<CR>'); assert(content():find('"nested"', 1, true)); key('q')
+key('<CR>'); assert(content():find('"nested"', 1, true))
+assert(not content():find('$oid', 1, true))
+key('r'); assert(content():find('$oid', 1, true))
+key('r'); assert(not content():find('$oid', 1, true)); key('q')
 key('R')
 callbacks[3]({ code = 124 })
 wait_for('timed out')

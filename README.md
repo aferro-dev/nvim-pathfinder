@@ -63,6 +63,8 @@ SQLite support requires Python 3 with its standard `sqlite3` module; PostgreSQL 
 
 ## Database data
 
+Table and collection names appear in bordered cards with bold headings. The detail modal follows the connected database: SQL tables show columns, keys and relationships; MongoDB collections show top-level fields and BSON types observed in up to 50 documents, plus index names and keys. Sampled fields are not schema constraints; fields absent from the sample are not shown. Press `v` from the detail modal to browse records.
+
 Press `v` in the database overview to browse the selected table or collection. PostgreSQL, MongoDB (including `mongodb+srv://`), and SQLite are supported. The data view is read-only and fetches 50 records per page asynchronously, with a 15-second client timeout. PostgreSQL queries use a read-only transaction. MongoDB uses `find()` and [canonical Extended JSON](https://www.mongodb.com/docs/mongodb-shell/reference/ejson/stringify/) to retain BSON types such as ObjectId and dates.
 
 | Key | Action |
@@ -137,3 +139,5 @@ nvim --headless -u NONE -l tests/theme.lua
 nvim --headless -u NONE -l tests/preview.lua
 python3 tests/startup.py
 ```
+
+The data browser fills the screen with a scrollable grid, padded cells, alternating row colors and distinct colors for IDs, dates, numbers and nested values. Move between cells with `hjkl` or arrows; use `Ctrl-d` / `Ctrl-u` or the mouse wheel to move vertically. MongoDB BSON wrappers are displayed as readable IDs, UTC dates and exact numeric strings, including nested values. In the record detail, `r` switches between the readable view and the original Extended JSON.

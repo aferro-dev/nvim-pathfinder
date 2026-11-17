@@ -139,6 +139,16 @@ local function dimensions()
     height = math.max(1, vim.o.lines - vim.o.cmdheight), style = 'minimal', border = 'none', zindex = 65 }
 end
 
+local function sync_header(s)
+  if not s.header or not api.nvim_win_is_valid(s.header) or not api.nvim_win_is_valid(s.win) then return end
+  local view = api.nvim_win_call(s.win, vim.fn.winsaveview)
+  local column = api.nvim_win_get_cursor(s.win)[2]
+  api.nvim_win_set_cursor(s.header, { s.grid and 3 or 1, column })
+  api.nvim_win_call(s.header, function()
+    vim.fn.winrestview({ topline = 1, leftcol = view.leftcol })
+  end)
+end
+
 local function select_cell()
   local s = session
   if not s or not api.nvim_win_is_valid(s.win) then return end
@@ -164,6 +174,8 @@ local function select_cell()
   api.nvim_win_set_cursor(s.win, { s.row + 4, range.start })
   api.nvim_win_call(s.win, function()
     local view = vim.fn.winsaveview()
+    -- The fixed header covers the first four screen rows.
+    if s.row + 4 - view.topline < 4 then view.topline = math.max(1, s.row) end
     local width = api.nvim_win_get_width(s.win)
     if range.left < view.leftcol or range.right - range.left >= width then
       view.leftcol = math.max(0, range.left - 2)
@@ -172,6 +184,7 @@ local function select_cell()
     end
     vim.fn.winrestview(view)
   end)
+  sync_header(s)
 end
 
 local function render()
@@ -211,6 +224,7 @@ local function render()
   end
   api.nvim_win_call(s.win, function() vim.fn.winrestview({ topline = 1, leftcol = 0 }) end)
   select_cell()
+  sync_header(s)
 end
 
 local function load()
@@ -264,9 +278,82 @@ function M.close()
   if not s then return end
   session = nil
   if s.job then s.job:kill(15) end
+  if s.write_job then s.write_job:kill(15) end
   close_detail(s)
+  if s.header and api.nvim_win_is_valid(s.header) then api.nvim_win_close(s.header, true) end
   if api.nvim_win_is_valid(s.win) then api.nvim_win_close(s.win, true) end
   if api.nvim_win_is_valid(s.origin) then api.nvim_set_current_win(s.origin) end
+end
+
+local function write_record(s, tbl, original, replacement, editor)
+  if session ~= s or s.writing then return end
+  local command, opts = client.write_command(s.connection, tbl, original, replacement)
+  if not command then vim.notify('Pathfinder: ' .. opts, vim.log.levels.ERROR); return end
+  s.writing = true
+  local ok, job = pcall(vim.system, command, opts, function(result)
+    vim.schedule(function()
+      if session ~= s then return end
+      s.writing, s.write_job = false, nil
+      if result.code ~= 0 then
+        vim.notify('Pathfinder: ' .. require('pathfinder.database').connection_error(result, s.connection.url or ''):gsub('Database connection', 'Database write'), vim.log.levels.ERROR)
+        return
+      end
+      if editor and s.detail == editor then close_detail(s) end
+      vim.notify(replacement and 'Pathfinder: Record saved' or 'Pathfinder: Record deleted')
+      load()
+    end)
+  end)
+  if ok then s.write_job = job else s.writing = false; vim.notify('Pathfinder: Could not start database writer', vim.log.levels.ERROR) end
+end
+
+local function edit_record()
+  local s = session
+  local original = s.rows[s.row or 1]
+  if s.loading or s.writing or not original then return end
+  local tbl = s.tables[s.index]
+  local command, err = client.write_command(s.connection, tbl, original, nil)
+  if not command then vim.notify('Pathfinder: ' .. err, vim.log.levels.ERROR); return end
+  close_detail(s)
+  local buf = api.nvim_create_buf(false, true)
+  vim.bo[buf].bufhidden, vim.bo[buf].swapfile, vim.bo[buf].filetype = 'wipe', false, 'json'
+  api.nvim_buf_set_lines(buf, 0, -1, false, M.pretty(original))
+  local function layout()
+    local w, h = math.max(1, math.min(100, vim.o.columns - 6)), math.max(1, math.min(30, vim.o.lines - vim.o.cmdheight - 6))
+    return { relative = 'editor', row = math.max(0, math.floor((vim.o.lines - h - 2) / 2)),
+      col = math.max(0, math.floor((vim.o.columns - w - 2) / 2)), width = w, height = h,
+      style = 'minimal', border = 'rounded', zindex = 75,
+      title = ' Edit · ' .. clean(tbl.name) .. (s.connection.kind == 'mongo' and ' · Extended JSON ' or ' · JSON '),
+      footer = ' Ctrl-s: save · Esc (normal mode): cancel ' }
+  end
+  local win = api.nvim_open_win(buf, true, layout())
+  s.detail = win
+  vim.wo[win].wrap = false
+  vim.wo[win].winhighlight = 'Normal:PathfinderNormal,NormalFloat:PathfinderNormal,FloatBorder:PathfinderBorder'
+  require('pathfinder.viewport').bind(buf)
+  vim.keymap.set({ 'n', 'i' }, '<C-s>', function()
+    vim.cmd.stopinsert()
+    local ok, replacement = pcall(vim.json.decode, table.concat(api.nvim_buf_get_lines(buf, 0, -1, false), '\n'))
+    if not ok or type(replacement) ~= 'table' or replacement == vim.NIL or vim.islist(replacement) then
+      vim.notify('Pathfinder: Enter a valid JSON object', vim.log.levels.ERROR); return
+    end
+    write_record(s, tbl, original, replacement, win)
+  end, { buffer = buf, silent = true })
+  vim.keymap.set('n', '<Esc>', function() if not s.writing then close_detail(s) end end, { buffer = buf, silent = true })
+  api.nvim_create_autocmd('VimResized', { buffer = buf, callback = function()
+    if api.nvim_win_is_valid(win) then api.nvim_win_set_config(win, layout()) end
+  end })
+end
+
+local function delete_record()
+  local s = session
+  local original = s.rows[s.row or 1]
+  if s.loading or s.writing or not original then return end
+  local tbl = s.tables[s.index]
+  local command, err = client.write_command(s.connection, tbl, original, nil)
+  if not command then vim.notify('Pathfinder: ' .. err, vim.log.levels.ERROR); return end
+  vim.ui.select({ 'Cancel', 'Delete record' }, { prompt = 'Delete record from ' .. clean(tbl.name) .. '?' }, function(choice)
+    if choice == 'Delete record' and session == s then write_record(s, tbl, original, nil) end
+  end)
 end
 
 local function details()
@@ -283,14 +370,17 @@ local function details()
   end
   write_record()
   vim.bo[buf].modifiable, vim.bo[buf].filetype = false, 'json'
+  local record_title = clean(s.tables[s.index].name) .. ' · Record ' .. (s.page * client.page_size + (s.row or 1))
   local function layout()
     local w, h = math.max(1, math.min(100, vim.o.columns - 6)), math.max(1, math.min(30, vim.o.lines - vim.o.cmdheight - 6))
     return { relative = 'editor', row = math.max(0, math.floor((vim.o.lines - vim.o.cmdheight - h - 2) / 2)), col = math.max(0, math.floor((vim.o.columns - w - 2) / 2)),
       width = w, height = h, border = 'rounded', style = 'minimal', zindex = 75,
-      title = mongo and (raw and ' Record · BSON / Extended JSON ' or ' Record · readable BSON ') or ' Record · JSON ',
-      footer = mongo and ' Esc/q: back · r: readable/raw · hjkl: scroll ' or ' Esc/q: back · hjkl: scroll ' }
+      title = ' ' .. record_title .. (mongo and (raw and ' · BSON / Extended JSON ' or ' · readable BSON ') or ' · JSON '),
+      footer = mongo and ' Esc/q: back · e: edit · dd: delete · r: readable/raw ' or ' Esc/q: back · e: edit · dd: delete ' }
   end
   s.detail = api.nvim_open_win(buf, true, layout())
+  vim.keymap.set('n', 'e', edit_record, { buffer = buf, silent = true })
+  vim.keymap.set('n', 'dd', function() close_detail(s); delete_record() end, { buffer = buf, silent = true })
   if mongo then
     vim.keymap.set('n', 'r', function()
       raw = not raw
@@ -298,7 +388,8 @@ local function details()
       api.nvim_win_set_config(s.detail, layout())
     end, { buffer = buf, silent = true })
   end
-  vim.wo[s.detail].wrap = true
+  vim.wo[s.detail].wrap = false
+  require('pathfinder.viewport').bind(buf)
   vim.wo[s.detail].winhighlight = 'Normal:PathfinderNormal,NormalFloat:PathfinderNormal,FloatBorder:PathfinderBorder'
   for _, key in ipairs({ 'q', '<Esc>', '<CR>' }) do
     vim.keymap.set('n', key, function() close_detail(s) end, { buffer = buf, silent = true })
@@ -320,7 +411,23 @@ function M.open(opts)
   vim.bo[buf].bufhidden, vim.bo[buf].swapfile, vim.bo[buf].filetype = 'wipe', false, 'pathfinder_database_data'
   vim.wo[win].wrap, vim.wo[win].cursorline, vim.wo[win].sidescrolloff = false, false, 0
   vim.wo[win].winhighlight = 'Normal:PathfinderNormal,NormalFloat:PathfinderNormal,FloatBorder:PathfinderBorder,FloatTitle:Title,FloatFooter:Comment'
-  vim.wo[win].winbar = '   Data · hjkl/↑↓←→: cells · Enter: record · Tab: collection · [/]: page · t: select · R: reload · q: back'
+  vim.wo[win].winbar = '   Data · hjkl: cells · Space/Enter: record · e: edit · dd: delete · Tab: collection · [/]: page · R: reload · q: back'
+  local function header_layout()
+    return { relative = 'win', win = win, row = 0, col = 0, width = api.nvim_win_get_width(win),
+      height = math.min(4, api.nvim_win_get_height(win)), style = 'minimal', border = 'none',
+      focusable = false, zindex = 66 }
+  end
+  s.header = api.nvim_open_win(buf, false, header_layout())
+  vim.wo[s.header].wrap, vim.wo[s.header].winbar = false, ''
+  vim.wo[s.header].winhighlight = vim.wo[win].winhighlight
+  vim.wo[s.header].sidescrolloff = 0
+  local scroll_event = api.nvim_create_autocmd('WinScrolled', { pattern = tostring(win), callback = function()
+    if session == s then sync_header(s) end
+  end })
+  api.nvim_create_autocmd('WinClosed', { pattern = tostring(win), once = true, callback = function()
+    api.nvim_del_autocmd(scroll_event)
+    if session == s then M.close() end
+  end })
   local function table_move(delta)
     local index = math.max(1, math.min(#s.tables, s.index + delta))
     if index == s.index then return end
@@ -339,6 +446,12 @@ function M.open(opts)
     s.column = math.max(1, math.min(#s.grid.columns, (s.column or 1) + dx * vim.v.count1))
     select_cell()
   end
+  require('pathfinder.viewport').bind(buf, function()
+    local ranges = s.grid and s.grid.cells[(s.row or 1) + 1]
+    local range = ranges and ranges[s.column or 1]
+    require('pathfinder.viewport').center(win, range and (range.left + range.right - 1) / 2)
+    sync_header(s)
+  end)
   for key, action in pairs({ q = M.close, ['<Esc>'] = M.close, v = M.close, D = M.close, ['<C-p>'] = M.close,
     h = function() move(-1, 0) end, l = function() move(1, 0) end,
     j = function() move(0, 1) end, k = function() move(0, -1) end,
@@ -357,11 +470,12 @@ function M.open(opts)
         load()
       end)
     end,
-    ['<CR>'] = details, R = load, u = function() M.close(); require('pathfinder.database').prompt() end,
+    ['<CR>'] = details, ['<Space>'] = details, e = edit_record, dd = delete_record, R = load, u = function() M.close(); require('pathfinder.database').prompt() end,
   }) do vim.keymap.set('n', key, action, { buffer = buf, silent = true, nowait = true }) end
   api.nvim_create_autocmd('VimResized', { buffer = buf, callback = function()
     if session == s and api.nvim_win_is_valid(win) then
       api.nvim_win_set_config(win, dimensions())
+      api.nvim_win_set_config(s.header, header_layout())
       select_cell()
     end
   end })

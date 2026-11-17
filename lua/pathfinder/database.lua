@@ -337,7 +337,8 @@ function M.toggle(opts)
         api.nvim_buf_set_extmark(detail, detail_ns, row - 1, 2, { end_col = 7, hl_group = 'DiagnosticInfo' })
       end
     end
-    vim.wo[detail_win].wrap = true
+    vim.wo[detail_win].wrap = false
+    require('pathfinder.viewport').bind(detail)
     vim.wo[detail_win].linebreak = true
     vim.wo[detail_win].breakindent = true
     api.nvim_set_option_value('winhighlight', 'Normal:PathfinderNormal,NormalFloat:PathfinderNormal,FloatBorder:PathfinderBorder,FloatTitle:Title,FloatFooter:Comment,WinBar:PathfinderNormal,WinBarNC:PathfinderNormal', { win = detail_win, scope = 'local' })
@@ -361,6 +362,10 @@ function M.toggle(opts)
     if not active_connection or session.loading then return end
     require('pathfinder.database_data').open({ connection = active_connection, tables = session.visible, index = session.index })
   end
+  require('pathfinder.viewport').bind(buf, function()
+    local pos = session and session.positions[session.index]
+    if pos then require('pathfinder.viewport').center(win, pos.col - 2 + (pos.width - 1) / 2) end
+  end)
   for key, action in pairs({ v = data, D = M.close, q = M.close, ['<Esc>'] = M.close, ['<C-p>'] = M.close,
     u = M.prompt, R = function() if connection then connect(connection) else M.prompt() end end,
     ['<Tab>'] = function() move(1) end, ['<S-Tab>'] = function() move(-1) end,

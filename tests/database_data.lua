@@ -77,6 +77,10 @@ assert(highlighted('PathfinderDataRow', 5) and not highlighted('PathfinderDataRo
 key('<CR>')
 assert(content():find('value 2', 1, true)) -- detail follows the selected record
 key('q')
+key('<Space>')
+assert(content():find('value 2', 1, true) and content():find('"optional": null', 1, true))
+assert(api.nvim_win_get_config(0).title[1][1]:find('records · Record 2', 1, true))
+key('<Esc>')
 key('l'); local last_col = cursor()[2]; key('l')
 assert(cursor()[2] == last_col) -- stop at the final column
 key('h'); key('<Left>'); key('h')
@@ -87,6 +91,19 @@ vim.cmd('normal 3j')
 assert(cursor()[1] == 8)
 for _ = 1, 60 do key('j') end
 assert(cursor()[1] == 54 and vim.fn.line('w0') > 1)
+local header_win
+for _, candidate in ipairs(api.nvim_list_wins()) do
+  local layout = api.nvim_win_get_config(candidate)
+  if layout.relative == 'win' and layout.win == api.nvim_get_current_win() then header_win = candidate end
+end
+assert(header_win and api.nvim_win_get_height(header_win) == 4)
+assert(api.nvim_win_call(header_win, function() return vim.fn.line('w0') end) == 1)
+assert(api.nvim_win_get_buf(header_win) == api.nvim_get_current_buf())
+
+local before_center = cursor()
+key('zz')
+assert(vim.deep_equal(before_center, cursor()))
+assert(math.abs(vim.fn.winline() - (api.nvim_win_get_height(0) + 1) / 2) <= 1)
 for _ = 1, 60 do key('k') end
 assert(cursor()[1] == 5)
 key('<CR>')
@@ -109,6 +126,7 @@ api.nvim_exec_autocmds('VimResized', {})
 assert(api.nvim_win_get_width(data_win) == 85)
 key('v')
 assert(api.nvim_get_current_win() == origin and not api.nvim_win_is_valid(data_win))
+assert(not api.nvim_win_is_valid(header_win))
 
 -- Multibyte cells use byte offsets for the cursor and display widths for scrolling.
 vim.o.columns = 24
@@ -119,6 +137,11 @@ local narrow_col = cursor()[2]
 assert(api.nvim_get_current_line():sub(narrow_col + 1):find('null', 1, true) == 1)
 local leftcol = api.nvim_win_call(0, function() return vim.fn.winsaveview().leftcol end)
 assert(leftcol > 0)
+local selected_before_center = cursor()
+key('zz')
+assert(vim.deep_equal(selected_before_center, cursor()))
+local centered_view = vim.fn.winsaveview()
+assert(centered_view.leftcol > 0)
 key('h'); key('h')
 assert(cursor()[2] == 3)
 data.close()

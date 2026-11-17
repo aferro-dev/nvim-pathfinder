@@ -53,7 +53,7 @@ postgresql://user:password@localhost:5432/database
 postgres://user:password@localhost:5432/database
 ```
 
-`.env` entries can use `export`, single or double quotes, and trailing comments. Values are read literally; shell commands and variable interpolation are not evaluated. Relative SQLite paths resolve from the project root. URL-encode special characters in URLs. SQLite requires an existing file and opens it read-only; PostgreSQL reads metadata in a read-only transaction. MongoDB URLs must name a database; the overview lists its accessible collections without inferring relationships.
+`.env` entries can use `export`, single or double quotes, and trailing comments. Values are read literally; shell commands and variable interpolation are not evaluated. Relative SQLite paths resolve from the project root. URL-encode special characters in URLs. SQLite requires an existing file and opens it read-only for browsing; PostgreSQL reads metadata in a read-only transaction. MongoDB URLs must name a database; the overview lists its accessible collections without inferring relationships.
 
 The database map starts with every table collapsed, occupying one row per table. Spacing between layers and tables expands to use the available window and stays compact when the graph exceeds the viewport. Tables are arranged by their relationships, with directed connectors that remain visible when columns are collapsed. Selected tables and their incoming and outgoing connections are highlighted; other connections stay dim. Parallel foreign keys between the same tables share a connector, with every column mapping available in the detail modal. Large graphs scroll with the selected table. `hjkl` / arrow keys move between tables; `Tab` / `Shift-Tab` select the next or previous table. Enter opens a centered table modal with aligned key, column, type, and nullability fields, plus separate outgoing and incoming relationship sections. The map omits the common `public.` prefix and abbreviates long PostgreSQL type names; the modal retains the full table and column names. Esc or `q` closes the modal. Composite foreign keys show each column mapping, and PostgreSQL table names include their schema.
 
@@ -65,7 +65,7 @@ SQLite support requires Python 3 with its standard `sqlite3` module; PostgreSQL 
 
 Table and collection names appear in bordered cards with bold headings. The detail modal follows the connected database: SQL tables show columns, keys and relationships; MongoDB collections show top-level fields and BSON types observed in up to 50 documents, plus index names and keys. Sampled fields are not schema constraints; fields absent from the sample are not shown. Press `v` from the detail modal to browse records.
 
-Press `v` in the database overview to browse the selected table or collection. PostgreSQL, MongoDB (including `mongodb+srv://`), and SQLite are supported. The data view is read-only and fetches 50 records per page asynchronously, with a 15-second client timeout. PostgreSQL queries use a read-only transaction. MongoDB uses `find()` and [canonical Extended JSON](https://www.mongodb.com/docs/mongodb-shell/reference/ejson/stringify/) to retain BSON types such as ObjectId and dates.
+Press `v` in the database overview to browse the selected table or collection. PostgreSQL, MongoDB (including `mongodb+srv://`), and SQLite are supported. The data view fetches 50 records per page asynchronously, with a 15-second client timeout. PostgreSQL browsing queries use a read-only transaction. MongoDB uses `find()` and [canonical Extended JSON](https://www.mongodb.com/docs/mongodb-shell/reference/ejson/stringify/) to retain BSON types such as ObjectId and dates.
 
 | Key | Action |
 | --- | --- |
@@ -141,3 +141,7 @@ python3 tests/startup.py
 ```
 
 The data browser fills the screen with a scrollable grid, padded cells, alternating row colors and distinct colors for IDs, dates, numbers and nested values. Move between cells with `hjkl` or arrows; use `Ctrl-d` / `Ctrl-u` or the mouse wheel to move vertically. MongoDB BSON wrappers are displayed as readable IDs, UTC dates and exact numeric strings, including nested values. In the record detail, `r` switches between the readable view and the original Extended JSON.
+
+`zz` centers the selection vertically and horizontally in every Pathfinder view: the file tree, database map, data grid, table/collection detail and record detail. The grid centers the selected cell and the database map centers the selected card. Detail views scroll horizontally without wrapping. Centering respects the beginning of the buffer.
+
+Use `e` on a record (or inside its detail modal) to edit its complete JSON. MongoDB edits use canonical Extended JSON to preserve BSON types. Save with `Ctrl-s`; cancel with Esc in normal mode. Use `dd` to delete the selected record and confirm the prompt. SQL writes require a non-null primary key; primary keys and MongoDB `_id` cannot be changed. Writes check the original record and fail if it has changed or disappeared, then refresh the page after success. SQL column removal is rejected; use JSON `null` to clear a nullable column.

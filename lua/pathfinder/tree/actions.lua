@@ -1,0 +1,117 @@
+local M = {}
+local api, uv = vim.api, vim.uv
+local context = require('pathfinder.tree.context')
+local model = require('pathfinder.tree.model')
+local current, children, index_map = model.current, model.children, model.index_map
+local update_gitignore = model.update_gitignore
+local view = require('pathfinder.tree.view')
+local render, dimensions = view.render, view.dimensions
+
+local function reload(path, reveal)
+  update_gitignore()
+  local opened = {}
+  for name, entry in pairs(context.state.nodes) do if entry.open then opened[name] = true end end
+  if reveal then
+    local parent = vim.fs.dirname(path)
+    while parent and (parent == context.state.root.path or vim.fs.relpath(context.state.root.path, parent)) do
+      opened[parent] = true
+      if parent == context.state.root.path then break end
+      parent = vim.fs.dirname(parent)
+    end
+  end
+  context.state.root.children = nil
+  local function restore(node)
+    node.open = opened[node.path] or node == context.state.root
+    if node.open then for _, child in ipairs(children(node)) do restore(child) end end
+  end
+  restore(context.state.root)
+  index_map()
+  while path ~= context.state.root.path and not context.state.nodes[path] do path = vim.fs.dirname(path) end
+  render(path)
+end
+
+function M.refresh()
+  local node = current()
+  if node then reload(node.path) end
+end
+
+local function action_error(message)
+  vim.notify('Pathfinder: ' .. message, vim.log.levels.ERROR)
+end
+
+function M.create()
+  local node = current()
+  if not node then return end
+  local session = context.state
+  local base = node.dir and node.path or node.parent.path
+  vim.ui.input({ prompt = 'Create in ' .. base .. ' (end with / for a directory): ' }, function(name)
+    if context.state ~= session or not name or name == '' then return end
+    local directory = name:sub(-1) == '/'
+    local path = vim.fs.normalize(vim.fs.joinpath(base, name))
+    if name:sub(1, 1) == '/' or name:find('%c') or path == base or not vim.fs.relpath(base, path) then
+      action_error('Enter a relative path inside the selected directory')
+      return
+    end
+    if uv.fs_lstat(path) then action_error('Already exists: ' .. path); return end
+    local parent = vim.fs.dirname(path)
+    local ancestor = parent
+    while not uv.fs_lstat(ancestor) and ancestor ~= vim.fs.dirname(ancestor) do ancestor = vim.fs.dirname(ancestor) end
+    local real_base, real_ancestor = uv.fs_realpath(base), uv.fs_realpath(ancestor)
+    if not real_base or not real_ancestor or (real_ancestor ~= real_base and not vim.fs.relpath(real_base, real_ancestor)) then
+      action_error('The destination resolves outside the selected directory')
+      return
+    end
+    local ok, err = pcall(vim.fn.mkdir, directory and path or parent, 'p')
+    if not ok then action_error(tostring(err)); return end
+    if not directory then
+      local fd, open_err = uv.fs_open(path, 'wx', 420)
+      if not fd then action_error(tostring(open_err)); return end
+      uv.fs_close(fd)
+    elseif not uv.fs_stat(path) then
+      action_error('Could not create directory: ' .. path)
+      return
+    end
+    reload(path, true)
+  end)
+end
+
+function M.delete()
+  local node = current()
+  if not node or node == context.state.root then return end
+  local session = context.state
+  local path, parent = node.path, node.parent.path
+  local prompt = 'Delete ' .. path .. (node.dir and ' and all its contents?' or '?')
+  vim.ui.select({ 'Cancel', 'Delete' }, { prompt = prompt }, function(choice)
+    if context.state ~= session or choice ~= 'Delete' then return end
+    local buffers = {}
+    for _, buf in ipairs(api.nvim_list_bufs()) do
+      local name = api.nvim_buf_get_name(buf)
+      if name == path or (node.dir and vim.fs.relpath(path, name)) then
+        if vim.bo[buf].modified then
+          action_error('Save or discard unsaved changes before deleting: ' .. name)
+          return
+        end
+        buffers[#buffers + 1] = buf
+      end
+    end
+    -- Recheck the type: a directory replaced by a symlink is unlinked, not traversed.
+    local stat = uv.fs_lstat(path)
+    if not stat then action_error('No longer exists: ' .. path); return end
+    local ok, result = pcall(vim.fn.delete, path, stat.type == 'directory' and 'rf' or '')
+    if not ok or result ~= 0 then action_error('Could not delete: ' .. path); return end
+    for _, buf in ipairs(buffers) do
+      if api.nvim_buf_is_valid(buf) then pcall(api.nvim_buf_delete, buf, {}) end
+    end
+    reload(parent)
+  end)
+end
+
+function M.toggle_gitignore()
+  local node = current()
+  if not node then return end
+  context.config.gitignore = not context.config.gitignore
+  reload(node.path)
+  api.nvim_win_set_config(context.state.win, dimensions())
+end
+
+return M

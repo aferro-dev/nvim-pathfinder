@@ -138,6 +138,23 @@ local view = vim.fn.winsaveview()
 assert(view.leftcol > 0)
 assert(vim.fn.virtcol('.') - 1 - view.leftcol == math.floor(vim.api.nvim_win_get_width(0) / 2))
 p.close()
+-- At the outer column, either horizontal direction can enter the nearest branch.
+local boundary = root .. '/boundary'
+vim.fn.mkdir(boundary .. '/scripts', 'p')
+vim.fn.mkdir(boundary .. '/z-empty', 'p')
+for _, name in ipairs({ 'scripts/first.lua', 'scripts/last.lua', 'AGENTS.md' }) do
+  vim.fn.writefile({}, boundary .. '/' .. name)
+end
+vim.cmd.edit(boundary .. '/AGENTS.md')
+p.open({ root = boundary })
+has('AGENTS.md')
+p.horizontal(-1); has('last.lua')
+p.parent(); has('scripts/')
+p.close()
+vim.cmd.edit(boundary .. '/AGENTS.md')
+p.open({ root = boundary })
+p.horizontal(1); has('last.lua')
+p.close()
 vim.fn.delete(root, 'rf')
 print('Tree map navigation passed')
 vim.cmd('qa!')

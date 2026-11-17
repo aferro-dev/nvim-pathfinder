@@ -285,7 +285,7 @@ function M.close()
   if api.nvim_win_is_valid(s.origin) then api.nvim_set_current_win(s.origin) end
 end
 
-local function write_record(s, tbl, original, replacement, editor)
+local function write_record(s, tbl, original, replacement, on_saved)
   if session ~= s or s.writing then return end
   local command, opts = client.write_command(s.connection, tbl, original, replacement)
   if not command then vim.notify('Pathfinder: ' .. opts, vim.log.levels.ERROR); return end
@@ -298,7 +298,7 @@ local function write_record(s, tbl, original, replacement, editor)
         vim.notify('Pathfinder: ' .. require('pathfinder.database').connection_error(result, s.connection.url or ''):gsub('Database connection', 'Database write'), vim.log.levels.ERROR)
         return
       end
-      if editor and s.detail == editor then close_detail(s) end
+      if on_saved then on_saved() end
       vim.notify(replacement and 'Pathfinder: Record saved' or 'Pathfinder: Record deleted')
       load()
     end)
@@ -311,34 +311,42 @@ local function edit_record()
   local original = s.rows[s.row or 1]
   if s.loading or s.writing or not original then return end
   local tbl = s.tables[s.index]
-  local command, err = client.write_command(s.connection, tbl, original, nil)
-  if not command then vim.notify('Pathfinder: ' .. err, vim.log.levels.ERROR); return end
   close_detail(s)
   local buf = api.nvim_create_buf(false, true)
-  vim.bo[buf].bufhidden, vim.bo[buf].swapfile, vim.bo[buf].filetype = 'wipe', false, 'json'
+  vim.bo[buf].buftype, vim.bo[buf].swapfile, vim.bo[buf].filetype = 'acwrite', false, 'json'
+  api.nvim_buf_set_name(buf, 'pathfinder://record/' .. buf .. '/' .. clean(tbl.name):gsub('/', '_'))
   api.nvim_buf_set_lines(buf, 0, -1, false, M.pretty(original))
+  vim.bo[buf].modified = false
   local function layout()
     local w, h = math.max(1, math.min(100, vim.o.columns - 6)), math.max(1, math.min(30, vim.o.lines - vim.o.cmdheight - 6))
     return { relative = 'editor', row = math.max(0, math.floor((vim.o.lines - h - 2) / 2)),
       col = math.max(0, math.floor((vim.o.columns - w - 2) / 2)), width = w, height = h,
       style = 'minimal', border = 'rounded', zindex = 75,
-      title = ' Edit · ' .. clean(tbl.name) .. (s.connection.kind == 'mongo' and ' · Extended JSON ' or ' · JSON '),
-      footer = ' Ctrl-s: save · Esc (normal mode): cancel ' }
+      title = ' ' .. clean(tbl.name) .. ' · Record ' .. (s.page * client.page_size + (s.row or 1)) .. (s.connection.kind == 'mongo' and ' · Extended JSON ' or ' · JSON '),
+      footer = ' :w save · :q close · :q! discard ' }
   end
   local win = api.nvim_open_win(buf, true, layout())
   s.detail = win
   vim.wo[win].wrap = false
   vim.wo[win].winhighlight = 'Normal:PathfinderNormal,NormalFloat:PathfinderNormal,FloatBorder:PathfinderBorder'
   require('pathfinder.viewport').bind(buf)
-  vim.keymap.set({ 'n', 'i' }, '<C-s>', function()
-    vim.cmd.stopinsert()
+  api.nvim_create_autocmd('BufWriteCmd', { buffer = buf, callback = function()
+    if session ~= s then error('Database session is closed') end
+    if s.writing then error('A database write is already running') end
     local ok, replacement = pcall(vim.json.decode, table.concat(api.nvim_buf_get_lines(buf, 0, -1, false), '\n'))
     if not ok or type(replacement) ~= 'table' or replacement == vim.NIL or vim.islist(replacement) then
-      vim.notify('Pathfinder: Enter a valid JSON object', vim.log.levels.ERROR); return
+      error('Enter a valid JSON object')
     end
-    write_record(s, tbl, original, replacement, win)
-  end, { buffer = buf, silent = true })
-  vim.keymap.set('n', '<Esc>', function() if not s.writing then close_detail(s) end end, { buffer = buf, silent = true })
+    if vim.deep_equal(original, replacement) then vim.bo[buf].modified = false; return end
+    local tick = api.nvim_buf_get_changedtick(buf)
+    write_record(s, tbl, original, replacement, function()
+      original = replacement
+      if api.nvim_buf_is_valid(buf) and api.nvim_buf_get_changedtick(buf) == tick then vim.bo[buf].modified = false end
+    end)
+    -- :wq must wait for acknowledgement before Vim decides whether to close.
+    vim.wait(16000, function() return not s.writing end, 10)
+    if vim.bo[buf].modified then error('Record was not saved; the buffer is still modified') end
+  end })
   api.nvim_create_autocmd('VimResized', { buffer = buf, callback = function()
     if api.nvim_win_is_valid(win) then api.nvim_win_set_config(win, layout()) end
   end })
@@ -356,48 +364,6 @@ local function delete_record()
   end)
 end
 
-local function details()
-  local s = session
-  local row = s.rows[s.row or 1]
-  if s.loading or s.error or not row then return end
-  local buf = api.nvim_create_buf(false, true)
-  vim.bo[buf].bufhidden, vim.bo[buf].swapfile = 'wipe', false
-  local mongo, raw = s.connection.kind == 'mongo', false
-  local function write_record()
-    vim.bo[buf].modifiable = true
-    api.nvim_buf_set_lines(buf, 0, -1, false, M.pretty(mongo and not raw and M.readable(row) or row))
-    vim.bo[buf].modifiable = false
-  end
-  write_record()
-  vim.bo[buf].modifiable, vim.bo[buf].filetype = false, 'json'
-  local record_title = clean(s.tables[s.index].name) .. ' · Record ' .. (s.page * client.page_size + (s.row or 1))
-  local function layout()
-    local w, h = math.max(1, math.min(100, vim.o.columns - 6)), math.max(1, math.min(30, vim.o.lines - vim.o.cmdheight - 6))
-    return { relative = 'editor', row = math.max(0, math.floor((vim.o.lines - vim.o.cmdheight - h - 2) / 2)), col = math.max(0, math.floor((vim.o.columns - w - 2) / 2)),
-      width = w, height = h, border = 'rounded', style = 'minimal', zindex = 75,
-      title = ' ' .. record_title .. (mongo and (raw and ' · BSON / Extended JSON ' or ' · readable BSON ') or ' · JSON '),
-      footer = mongo and ' Esc/q: back · e: edit · dd: delete · r: readable/raw ' or ' Esc/q: back · e: edit · dd: delete ' }
-  end
-  s.detail = api.nvim_open_win(buf, true, layout())
-  vim.keymap.set('n', 'e', edit_record, { buffer = buf, silent = true })
-  vim.keymap.set('n', 'dd', function() close_detail(s); delete_record() end, { buffer = buf, silent = true })
-  if mongo then
-    vim.keymap.set('n', 'r', function()
-      raw = not raw
-      write_record()
-      api.nvim_win_set_config(s.detail, layout())
-    end, { buffer = buf, silent = true })
-  end
-  vim.wo[s.detail].wrap = false
-  require('pathfinder.viewport').bind(buf)
-  vim.wo[s.detail].winhighlight = 'Normal:PathfinderNormal,NormalFloat:PathfinderNormal,FloatBorder:PathfinderBorder'
-  for _, key in ipairs({ 'q', '<Esc>', '<CR>' }) do
-    vim.keymap.set('n', key, function() close_detail(s) end, { buffer = buf, silent = true })
-  end
-  api.nvim_create_autocmd('VimResized', { buffer = buf, callback = function()
-    if s.detail and api.nvim_win_is_valid(s.detail) then api.nvim_win_set_config(s.detail, layout()) end
-  end })
-end
 
 function M.open(opts)
   if session then M.close() end
@@ -470,7 +436,7 @@ function M.open(opts)
         load()
       end)
     end,
-    ['<CR>'] = details, ['<Space>'] = details, e = edit_record, dd = delete_record, R = load, u = function() M.close(); require('pathfinder.database').prompt() end,
+    ['<CR>'] = edit_record, ['<Space>'] = edit_record, e = edit_record, dd = delete_record, R = load, u = function() M.close(); require('pathfinder.database').prompt() end,
   }) do vim.keymap.set('n', key, action, { buffer = buf, silent = true, nowait = true }) end
   api.nvim_create_autocmd('VimResized', { buffer = buf, callback = function()
     if session == s and api.nvim_win_is_valid(win) then

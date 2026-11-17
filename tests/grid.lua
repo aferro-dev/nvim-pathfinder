@@ -155,6 +155,21 @@ vim.cmd.edit(boundary .. '/AGENTS.md')
 p.open({ root = boundary })
 p.horizontal(1); has('last.lua')
 p.close()
+-- The fallback follows nested branches through any number of closed levels.
+local recursive = root .. '/recursive'
+vim.fn.mkdir(recursive .. '/scripts/nested/deeper', 'p')
+vim.fn.writefile({}, recursive .. '/scripts/nested/deeper/last.lua')
+vim.fn.writefile({}, recursive .. '/nvim.log')
+for _, direction in ipairs({ -1, 1 }) do
+  vim.cmd.edit(recursive .. '/nvim.log')
+  p.open({ root = recursive })
+  p.horizontal(direction); has('last.lua')
+  assert(contents():find('nested/', 1, true) and contents():find('deeper/', 1, true))
+  p.horizontal(-1); has('deeper/')
+  p.horizontal(-1); has('nested/')
+  p.horizontal(-1); has('scripts/')
+  p.close()
+end
 vim.fn.delete(root, 'rf')
 print('Tree map navigation passed')
 vim.cmd('qa!')

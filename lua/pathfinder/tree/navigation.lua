@@ -67,11 +67,16 @@ function M.horizontal(delta)
       end
     end
     if not target then return from end
-    local entries = children(target)
-    local child = entries[target.map_row < from.map_row and #entries or 1]
-    target.open = true
+    local bottom = target.map_row < from.map_row
+    -- Follow the nearest edge through every nested directory, even when closed.
+    while target.dir do
+      local entries = children(target)
+      if #entries == 0 then break end
+      target.open = true
+      target = entries[bottom and #entries or 1]
+    end
     index_map()
-    return child
+    return target
   end
   for _ = 1, vim.v.count1 do
     local row = node.map_row

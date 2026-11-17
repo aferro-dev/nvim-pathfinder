@@ -359,9 +359,8 @@ local function delete_record()
   local tbl = s.tables[s.index]
   local command, err = client.write_command(s.connection, tbl, original, nil)
   if not command then vim.notify('Pathfinder: ' .. err, vim.log.levels.ERROR); return end
-  vim.ui.select({ 'Cancel', 'Delete record' }, { prompt = 'Delete record from ' .. clean(tbl.name) .. '?' }, function(choice)
-    if choice == 'Delete record' and session == s then write_record(s, tbl, original, nil) end
-  end)
+  local choice = vim.fn.confirm('Delete record from ' .. clean(tbl.name) .. '?', '&Yes\n&No', 2)
+  if choice == 1 and session == s then write_record(s, tbl, original, nil) end
 end
 
 

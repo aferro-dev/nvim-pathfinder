@@ -3,10 +3,13 @@ local p = require('pathfinder')
 local temp = vim.fn.tempname()
 local root = temp .. '/project'
 vim.fn.mkdir(root, 'p')
-local input, select, notify = vim.ui.input, vim.ui.select, vim.notify
+local input, confirm, notify = vim.ui.input, vim.fn.confirm, vim.notify
 local answer, choice, errors = nil, nil, {}
 vim.ui.input = function(_, cb) cb(answer) end
-vim.ui.select = function(_, _, cb) cb(choice) end
+vim.fn.confirm = function(_, buttons, default)
+  assert(buttons == '&Yes\n&No' and default == 2)
+  return choice
+end
 vim.notify = function(message) errors[#errors + 1] = message end
 p.open({ root = root })
 answer = 'nested/file with spaces.lua'; p.create()
@@ -18,12 +21,12 @@ assert(errors[#errors]:find('Already exists', 1, true))
 answer = '../escape.lua'; p.create()
 assert(not vim.uv.fs_stat(root .. '/escape.lua'))
 answer = nil; p.create() -- cancelled input
-choice = 'Cancel'; p.delete()
+choice = 2; p.delete()
 assert(vim.uv.fs_stat(file))
 local buf = vim.fn.bufadd(file)
 vim.fn.bufload(buf)
 vim.api.nvim_buf_set_lines(buf, 0, -1, false, { 'unsaved work' })
-choice = 'Delete'; p.delete()
+choice = 1; p.delete()
 assert(vim.uv.fs_stat(file) and vim.bo[buf].modified)
 p.parent(); p.delete() -- recursive delete also protects dirty descendants
 assert(vim.uv.fs_stat(file))
@@ -57,7 +60,7 @@ local pending
 vim.ui.input = function(_, cb) pending = cb end
 p.create(); p.close(); pending('late.lua')
 assert(not vim.uv.fs_stat(root .. '/late.lua'))
-vim.ui.input, vim.ui.select, vim.notify = input, select, notify
+vim.ui.input, vim.fn.confirm, vim.notify = input, confirm, notify
 vim.fn.delete(temp, 'rf')
 print('File actions passed')
 vim.cmd('qa!')

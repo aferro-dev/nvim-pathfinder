@@ -12,7 +12,7 @@ Pathfinder replaces netrw: it opens with `nvim`, `nvim .`, `nvim /path/to/direct
 
 | Key | Action |
 | --- | --- |
-| `j/k`, `↓/↑` | Next/previous node; expand the adjacent branch to keep depth, or move up when needed |
+| `j/k`, `↓/↑` | Next/previous node at the same depth; wrap at either end and skip shorter branches |
 | `h`, `←` | Previous column, selecting the nearest node vertically |
 | `l`, `→` | Expand the selected directory and enter its first child; files stay selected |
 | `Enter` | Open file or toggle directory; expanding selects the first child |
@@ -146,4 +146,4 @@ The data browser fills the screen with a scrollable grid, padded cells, alternat
 
 Use Space, Enter or `e` on a record to open its complete JSON in an editable buffer. MongoDB edits use canonical Extended JSON to preserve BSON types. Use normal Vim commands: `:w` saves to the database, `:q` closes and `:q!` discards unsaved changes. Use `dd` to delete the selected record and confirm the prompt. SQL writes require a non-null primary key; primary keys and MongoDB `_id` cannot be changed. Writes check the original record and fail if it has changed or disappeared, then refresh the page after success. SQL column removal is rejected; use JSON `null` to clear a nullable column.
 
-When a horizontal move has no destination (left at the outermost column, or right on a file or empty directory), Pathfinder opens the nearest nonempty directory in the same column and selects its nearest edge child. Empty directories are skipped.
+Horizontal movement changes nesting depth only: Right moves to the next depth and Left to the previous, selecting the closest vertical position. Hidden paths are opened as needed. Right at the deepest level wraps to the first; Left at the first wraps to the deepest. Vertical movement cycles through nodes at the same depth across branches, opening the selected path without ever falling back to a shallower node.

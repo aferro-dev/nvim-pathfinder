@@ -31,14 +31,14 @@ local command, opts = client.write_command(connection, tbl, { id = 1, value = 'b
 assert(vim.system(command, opts):wait().code ~= 0) -- stale delete must roll back
 assert(not client.write_command(connection, tbl, { id = 1, value = 'after' }, { id = 2, value = 'after' }))
 assert(not client.write_command(connection, { name = 'records', columns = {} }, { id = 1 }, nil))
-local select = vim.ui.select
-vim.ui.select = function(items, _, callback) callback(items[1]) end
+local confirm = vim.fn.confirm
+vim.fn.confirm = function(_, buttons, default) assert(buttons == '&Yes\n&No' and default == 2); return 2 end
 key('dd')
 assert(content():find('after', 1, true))
-vim.ui.select = function(items, _, callback) callback(items[2]) end
+vim.fn.confirm = function() return 1 end
 key('dd')
 wait_for('No records')
-vim.ui.select = select
+vim.fn.confirm = confirm
 data.close()
 local pg = { kind = 'postgres', url = 'postgres://host/db' }
 local pgcmd, pgopts = client.write_command(pg, { name = 'public.records', columns = tbl.columns }, { id = 1, value = 'old' }, { id = 1, value = "O'Reilly\\text" })

@@ -17,8 +17,11 @@ local function has(name)
 end
 local function contents() return table.concat(vim.api.nvim_buf_get_lines(0, 0, -1, false), '\n') end
 has('seed-food.ts')
-p.horizontal(1); has('seed-food.ts') -- right on a file stays on that file
 assert(not contents():find('index.ts', 1, true)) -- src starts collapsed
+p.horizontal(1); has('apps/') -- deepest level wraps to the first
+p.close()
+vim.cmd.edit(root .. '/apps/backend/scripts/seed-food.ts')
+p.open({ root = root })
 local original_col = vim.api.nvim_win_get_cursor(0)[2]
 p.parent(); has('scripts/')
 assert(vim.api.nvim_win_get_cursor(0)[2] < original_col)
@@ -78,9 +81,9 @@ p.vertical(1); has('pathfinder.lua')
 p.parent(); has('plugin/')
 p.horizontal(1); has('pathfinder.lua')
 p.vertical(1); has('grid.lua')
-p.vertical(1); has('z-empty/')
-assert(vim.api.nvim_win_get_cursor(0)[2] < depth_col)
-p.vertical(1); has('README.md')
+p.vertical(1); has('nixvim.nix') -- wrap without falling back to a shallower node
+assert(require('pathfinder.tree.model').current().depth == 2)
+p.vertical(-1); has('grid.lua')
 p.close()
 -- The same behavior applies upwards into an initially collapsed branch.
 vim.cmd.edit(navigation .. '/plugin/pathfinder.lua')
@@ -160,16 +163,43 @@ local recursive = root .. '/recursive'
 vim.fn.mkdir(recursive .. '/scripts/nested/deeper', 'p')
 vim.fn.writefile({}, recursive .. '/scripts/nested/deeper/last.lua')
 vim.fn.writefile({}, recursive .. '/nvim.log')
-for _, direction in ipairs({ -1, 1 }) do
-  vim.cmd.edit(recursive .. '/nvim.log')
-  p.open({ root = recursive })
-  p.horizontal(direction); has('last.lua')
-  assert(contents():find('nested/', 1, true) and contents():find('deeper/', 1, true))
-  p.horizontal(-1); has('deeper/')
-  p.horizontal(-1); has('nested/')
-  p.horizontal(-1); has('scripts/')
-  p.close()
+vim.cmd.edit(recursive .. '/nvim.log')
+p.open({ root = recursive })
+p.horizontal(-1); has('last.lua')
+p.horizontal(-1); has('deeper/')
+p.horizontal(-1); has('nested/')
+p.horizontal(-1); has('scripts/')
+p.close()
+vim.cmd.edit(recursive .. '/nvim.log')
+p.open({ root = recursive })
+p.horizontal(1); has('nested/')
+p.horizontal(1); has('deeper/')
+p.horizontal(1); has('last.lua')
+p.horizontal(1); has('scripts/') -- deepest wraps back to depth one
+p.close()
+-- Repeated Right crosses parent levels and keeps uncovering nested branches.
+local repeated = root .. '/repeated'
+vim.fn.mkdir(repeated .. '/lua/pathfinder/tree', 'p')
+vim.fn.mkdir(repeated .. '/scripts', 'p')
+vim.fn.mkdir(repeated .. '/tests', 'p')
+for _, name in ipairs({ 'lua/pathfinder/tree/view.lua', 'lua/pathfinder/database.lua', 'lua/pathfinder/viewport.lua', 'scripts/seed.lua', 'tests/theme.lua', 'nvim.log' }) do
+  vim.fn.writefile({}, repeated .. '/' .. name)
 end
+vim.cmd.edit(repeated .. '/nvim.log')
+p.open({ root = repeated })
+p.horizontal(1); has('theme.lua')
+p.horizontal(1); has('viewport.lua') -- next depth, even in another branch
+p.horizontal(1); has('view.lua')
+p.horizontal(1); has('lua/') -- depth wraps rather than staying on a leaf
+local selected = require('pathfinder.tree.model').current
+for _ = 1, 6 do
+  local depth = selected().depth
+  for _ = 1, 20 do p.vertical(1); assert(selected().depth == depth) end
+  for _ = 1, 20 do p.vertical(-1); assert(selected().depth == depth) end
+  p.horizontal(1)
+  assert(selected().depth == depth % 4 + 1)
+end
+p.close()
 vim.fn.delete(root, 'rf')
 print('Tree map navigation passed')
 vim.cmd('qa!')

@@ -29,15 +29,12 @@ p.vertical(1); has('middlewares/')
 p.horizontal(-1); has('auxiliary/')
 p.vertical(-1); has('auth/')
 p.vertical(1); has('auxiliary/')
-p.horizontal(1); has('errors/') -- enter the selected directory directly
-p.vertical(1); has('middlewares/')
+p.horizontal(1); has('middlewares/') -- preserve vertical position in the next column
 p.vertical(1); has('dal.ts')
-p.vertical(1); has('chart-series/') -- empty next branch falls back to its directory
-p.vertical(-1); has('auxiliary/') -- now navigating at the shallower depth
-p.horizontal(1); has('errors/')
-p.vertical(1); has('middlewares/')
-p.vertical(1); has('dal.ts')
-p.horizontal(-1); has('auxiliary/') -- centered parent is the nearest node
+p.vertical(1); has('errors/') -- wrap at the same depth, skipping shallower empty branches
+assert(require('pathfinder.tree.model').current().depth == 3)
+p.vertical(-1); has('dal.ts')
+p.horizontal(-1); has('auxiliary/')
 p.parent(); has('app/')
 p.close()
 assert(vim.api.nvim_get_current_buf() == origin)

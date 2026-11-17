@@ -24,83 +24,78 @@ function M.center()
   end)
 end
 
--- Cross neighboring branches, opening only the path needed to keep depth.
+-- Navigation axes are independent: vertical moves never change depth.
 function M.vertical(delta)
   local node = current()
   if not node then return end
-  for _ = 1, vim.v.count1 do
-    local depth = node.depth
-    local branch, candidate = node, nil
-    while branch.parent do
-      local siblings = children(branch.parent)
-      for i, sibling in ipairs(siblings) do
-        if sibling == branch then candidate = siblings[i + delta]; break end
-      end
-      if candidate then break end
-      branch = branch.parent
+  local entries = {}
+  local function collect(directory, depth)
+    for _, entry in ipairs(children(directory)) do
+      if depth == node.depth then entries[#entries + 1] = entry
+      elseif entry.dir then collect(entry, depth + 1) end
     end
-    if not candidate then break end
-    local candidate_depth = branch.depth
-    while candidate_depth < depth and candidate.dir do
-      candidate.open = true
-      local entries = children(candidate)
-      local child = entries[delta > 0 and 1 or #entries]
-      if not child then break end
-      candidate = child
-      candidate_depth = candidate_depth + 1
-    end
-    index_map()
-    node = candidate
   end
+  collect(context.state.root, 1)
+  if #entries == 0 then return end
+  local selected = 1
+  for i, entry in ipairs(entries) do if entry == node then selected = i; break end end
+  node = entries[(selected - 1 + delta * vim.v.count1) % #entries + 1]
+  local ancestor = node.parent
+  while ancestor do ancestor.open = true; ancestor = ancestor.parent end
+  index_map()
   render(node.path)
+end
+
+-- Reveal only one path when the next depth is still hidden.
+local function reveal_depth(depth, from)
+  if context.state.columns[depth] then return true end
+  local function path_to(directory, remaining)
+    local entries = children(directory)
+    if #entries == 0 then return end
+    if remaining == 1 then return { directory } end
+    for _, entry in ipairs(entries) do
+      if entry.dir then
+        local path = path_to(entry, remaining - 1)
+        if path then table.insert(path, 1, directory); return path end
+      end
+    end
+  end
+  for level = depth - 1, 1, -1 do
+    local best, distance
+    for _, candidate in ipairs(context.state.columns[level] or {}) do
+      if candidate.dir then
+        local path = path_to(candidate, depth - level)
+        local d = math.abs(candidate.map_row - from.map_row)
+        if path and (not distance or d < distance) then best, distance = path, d end
+      end
+    end
+    if best then
+      for _, directory in ipairs(best) do directory.open = true end
+      index_map()
+      return true
+    end
+  end
+  return false
 end
 
 function M.horizontal(delta)
   local node = current()
   if not node then return end
-  local function neighboring_branch(from)
-    local target, distance
-    for _, candidate in ipairs(context.state.columns[from.depth] or {}) do
-      if candidate ~= from and candidate.dir and #children(candidate) > 0 then
-        local d = math.abs(candidate.map_row - from.map_row)
-        if not distance or d < distance then target, distance = candidate, d end
-      end
-    end
-    if not target then return from end
-    local bottom = target.map_row < from.map_row
-    -- Follow the nearest edge through every nested directory, even when closed.
-    while target.dir do
-      local entries = children(target)
-      if #entries == 0 then break end
-      target.open = true
-      target = entries[bottom and #entries or 1]
-    end
-    index_map()
-    return target
-  end
   for _ = 1, vim.v.count1 do
-    local row = node.map_row
+    local depth = node.depth + delta
     if delta > 0 then
-      if node.dir and #children(node) > 0 then
-        node.open = true
-        index_map()
-        node = children(node)[1]
-      else
-        node = neighboring_branch(node)
-      end
-    else
-      local column = context.state.columns[node.depth + delta]
-      if not column then
-        node = neighboring_branch(node)
-      else
-        local target, distance
-        for _, candidate in ipairs(column) do
-          local d = math.abs(candidate.map_row - row)
-          if not distance or d < distance then target, distance = candidate, d end
-        end
-        node = target
-      end
+      if node.dir and #children(node) > 0 then node.open = true; index_map() end
+      if not reveal_depth(depth, node) then depth = 1 end
+    elseif depth < 1 then
+      depth = #context.state.columns
+      while reveal_depth(depth + 1, node) do depth = depth + 1 end
     end
+    local target, distance
+    for _, candidate in ipairs(context.state.columns[depth] or {}) do
+      local d = math.abs(candidate.map_row - node.map_row)
+      if not distance or d < distance then target, distance = candidate, d end
+    end
+    node = target or node
   end
   render(node.path)
 end

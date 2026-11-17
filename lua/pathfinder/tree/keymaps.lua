@@ -17,9 +17,9 @@ function M.attach(buf, explorer)
 
   }
   local descriptions = {
-    j = 'Next node', k = 'Previous node', h = 'Previous column', l = 'Expand directory and select first child',
-    ['<Down>'] = 'Next node', ['<Up>'] = 'Previous node',
-    ['<Left>'] = 'Previous column', ['<Right>'] = 'Expand directory and select first child',
+    j = 'Next node at same depth (wrap)', k = 'Previous node at same depth (wrap)', h = 'Previous nesting level (wrap)', l = 'Next nesting level (wrap)',
+    ['<Down>'] = 'Next node at same depth (wrap)', ['<Up>'] = 'Previous node at same depth (wrap)',
+    ['<Left>'] = 'Previous nesting level (wrap)', ['<Right>'] = 'Next nesting level (wrap)',
     ['<CR>'] = 'Open file or toggle directory', ['<Space>'] = 'Toggle directory',
     ['<BS>'] = 'Select parent', ['-'] = 'Select parent',
     q = 'Close Pathfinder', ['<Esc>'] = 'Close Pathfinder', ['<C-p>'] = 'Close Pathfinder',

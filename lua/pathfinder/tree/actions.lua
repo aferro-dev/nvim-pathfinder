@@ -81,29 +81,29 @@ function M.delete()
   local session = context.state
   local path, parent = node.path, node.parent.path
   local prompt = 'Delete ' .. path .. (node.dir and ' and all its contents?' or '?')
-  vim.ui.select({ 'Cancel', 'Delete' }, { prompt = prompt }, function(choice)
-    if context.state ~= session or choice ~= 'Delete' then return end
-    local buffers = {}
-    for _, buf in ipairs(api.nvim_list_bufs()) do
-      local name = api.nvim_buf_get_name(buf)
-      if name == path or (node.dir and vim.fs.relpath(path, name)) then
-        if vim.bo[buf].modified then
-          action_error('Save or discard unsaved changes before deleting: ' .. name)
-          return
-        end
-        buffers[#buffers + 1] = buf
+  local choice = vim.fn.confirm(prompt, '&Yes\n&No', 2)
+  if context.state ~= session or choice ~= 1 then return end
+  local buffers = {}
+  for _, buf in ipairs(api.nvim_list_bufs()) do
+    local name = api.nvim_buf_get_name(buf)
+    if name == path or (node.dir and vim.fs.relpath(path, name)) then
+      if vim.bo[buf].modified then
+        action_error('Save or discard unsaved changes before deleting: ' .. name)
+        return
       end
+      buffers[#buffers + 1] = buf
     end
-    -- Recheck the type: a directory replaced by a symlink is unlinked, not traversed.
-    local stat = uv.fs_lstat(path)
-    if not stat then action_error('No longer exists: ' .. path); return end
-    local ok, result = pcall(vim.fn.delete, path, stat.type == 'directory' and 'rf' or '')
-    if not ok or result ~= 0 then action_error('Could not delete: ' .. path); return end
-    for _, buf in ipairs(buffers) do
-      if api.nvim_buf_is_valid(buf) then pcall(api.nvim_buf_delete, buf, {}) end
-    end
-    reload(parent)
-  end)
+  end
+  -- Recheck the type: a directory replaced by a symlink is unlinked, not traversed.
+  local stat = uv.fs_lstat(path)
+  if not stat then action_error('No longer exists: ' .. path); return end
+  local ok, result = pcall(vim.fn.delete, path, stat.type == 'directory' and 'rf' or '')
+  if not ok or result ~= 0 then action_error('Could not delete: ' .. path); return end
+  for _, buf in ipairs(buffers) do
+    if api.nvim_buf_is_valid(buf) then pcall(api.nvim_buf_delete, buf, {}) end
+  end
+  reload(parent)
+
 end
 
 function M.toggle_gitignore()

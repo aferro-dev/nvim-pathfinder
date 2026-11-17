@@ -157,7 +157,7 @@ local function select_cell()
       end_col = range.finish,
       hl_group = i == 1 and 'PathfinderDataHeader' or i == s.row + 1 and 'PathfinderDataCell' or 'PathfinderDataColumn',
       priority = (i == 1 or i == s.row + 1) and 130 or 110,
-      hl_mode = 'combine',
+      hl_mode = (i == 1 or i == s.row + 1) and 'replace' or 'combine',
     })
   end
   local range = s.grid.cells[s.row + 1][s.column]

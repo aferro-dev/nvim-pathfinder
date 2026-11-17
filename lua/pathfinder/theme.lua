@@ -44,14 +44,26 @@ function M.apply()
   local bg, fg = canvas.bg or normal.bg or 0x151820, canvas.fg or normal.fg or 0xd8dee9
   local info = vim.api.nvim_get_hl(0, { name = 'DiagnosticInfo', link = false })
   local accent = info.fg or 0x61afef
+  -- Choose text against the actual selection surface, independently of Normal.
+  local function luminance(color)
+    local result = 0
+    for i, shift in ipairs({ 16, 8, 0 }) do
+      local channel = bit.band(bit.rshift(color, shift), 255) / 255
+      channel = channel <= 0.04045 and channel / 12.92 or ((channel + 0.055) / 1.055) ^ 2.4
+      result = result + channel * ({ 0.2126, 0.7152, 0.0722 })[i]
+    end
+    return result
+  end
+  local selection_text = luminance(accent) > 0.179 and 0x000000 or 0xffffff
   for name, hl in pairs({
     PathfinderDataText = { fg = fg },
     PathfinderDataStripe = { bg = blend(bg, fg, 0.035), ctermbg = 235 },
     PathfinderDataRow = { bg = blend(bg, accent, 0.13), ctermbg = 236 },
     PathfinderDataColumn = { bg = blend(bg, accent, 0.10), ctermbg = 235 },
     PathfinderDataHeading = { fg = accent, bg = blend(bg, accent, 0.08), bold = true, ctermfg = 81, ctermbg = 235 },
-    PathfinderDataHeader = { fg = accent, bg = blend(bg, accent, 0.22), bold = true, underline = true, ctermfg = 81, ctermbg = 24 },
-    PathfinderDataCell = { fg = bg, bg = accent, bold = true, underline = true, ctermfg = 16, ctermbg = 81 },
+    PathfinderDataHeader = { fg = accent, bg = blend(bg, accent, 0.22), bold = true, underline = false, ctermfg = 81, ctermbg = 24 },
+    PathfinderDataCell = { fg = selection_text, bg = accent, bold = true, underline = false,
+      reverse = false, standout = false, ctermfg = 16, ctermbg = 81, cterm = { bold = true } },
   }) do
     vim.api.nvim_set_hl(0, name, hl)
   end

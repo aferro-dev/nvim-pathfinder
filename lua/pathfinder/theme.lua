@@ -12,6 +12,7 @@ function M.apply()
     PathfinderBorder = 'WinSeparator',
     PathfinderMuted = 'Comment',
     PathfinderKey = 'Special',
+    PathfinderSearch = 'Search',
     PathfinderDataRow = 'CursorLine',
     PathfinderDataId = 'Comment',
     PathfinderDataDate = 'Special',

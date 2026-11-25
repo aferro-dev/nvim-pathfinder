@@ -14,6 +14,9 @@ function M.attach(buf, explorer)
     zR = explorer.expand_all, zM = explorer.collapse_all, zz = explorer.center,
     a = explorer.create, d = explorer.delete, I = explorer.toggle_gitignore,
     D = explorer.database, p = explorer.toggle_preview,
+    ['<C-A-P>'] = explorer.search, ['/'] = explorer.search,
+    n = function() require('pathfinder.tree.search').next(1) end,
+    N = function() require('pathfinder.tree.search').next(-1) end,
 
   }
   local descriptions = {
@@ -27,6 +30,8 @@ function M.attach(buf, explorer)
     zR = 'Expand all nodes', zM = 'Collapse all nodes', zz = 'Center selected node',
     a = 'Create file or directory', d = 'Delete file or directory', I = 'Toggle Git-ignored files',
     D = 'Switch to database UML', p = 'Toggle file preview',
+    ['<C-A-P>'] = 'Find in Pathfinder', ['/'] = 'Find in Pathfinder',
+    n = 'Next search match', N = 'Previous search match',
   }
   for key, action in pairs(maps) do
     vim.keymap.set('n', key, action, { buffer = buf, silent = true, nowait = true, desc = descriptions[key] })

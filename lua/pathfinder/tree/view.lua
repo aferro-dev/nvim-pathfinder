@@ -97,6 +97,17 @@ function M.render(target)
           marks[#marks + 1] = { screen_row - 1, icon_start, icon_start + #node.glyph,
             node.icon_hl }
         end
+        if s.search_query and s.search_query ~= '' then
+          local first, last = node.name:lower():find(s.search_query, 1, true)
+          if first then
+            local name_start = node.cursor_col + 2 + #node.glyph
+            local match_start = name_start + first - 1
+            local match_end = math.min(name_start + last, start + #left + #label)
+            if match_start < match_end then
+              marks[#marks + 1] = { screen_row - 1, match_start, match_end, 'PathfinderSearch' }
+            end
+          end
+        end
       end
       if depth < #s.columns then
         local edge_start = #text

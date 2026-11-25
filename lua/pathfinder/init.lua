@@ -9,6 +9,10 @@ local current, children, index_map = model.current, model.children, model.index_
 local update_gitignore = model.update_gitignore
 local render, dimensions = view.render, view.dimensions
 
+function M.search()
+  require('pathfinder.tree.search').open()
+end
+
 -- Preserve the public API while each module owns one explorer responsibility.
 for _, name in ipairs({ 'vertical', 'horizontal', 'parent', 'center', 'toggle_preview',
   'set_expanded', 'expand_all', 'collapse_all' }) do
@@ -84,11 +88,22 @@ function M.open(opts)
       render(node and node.path)
     end
   end })
-  api.nvim_create_autocmd('BufWipeout', { buffer = buf, once = true, callback = function()
-    if context.state and context.state.buf == buf then
-      require('pathfinder.preview').close()
-      context.state = nil
-    end
+  local session = context.state
+  api.nvim_create_autocmd({ 'BufWinLeave', 'BufWipeout' }, { buffer = buf, callback = function()
+    vim.schedule(function()
+      if context.state ~= session then return end
+      if not api.nvim_win_is_valid(win) then M.close(); return end
+      local replacement = api.nvim_win_get_buf(win)
+      if replacement == buf then return end
+      local cursor = api.nvim_win_get_cursor(win)
+      local origin_win = session.origin
+      M.close()
+      if api.nvim_win_is_valid(origin_win) and api.nvim_buf_is_valid(replacement) then
+        api.nvim_set_current_win(origin_win)
+        api.nvim_win_set_buf(origin_win, replacement)
+        api.nvim_win_set_cursor(origin_win, cursor)
+      end
+    end)
   end })
   update_gitignore()
   local node = context.state.root
@@ -108,6 +123,7 @@ end
 
 function M.setup(opts)
   context.config = vim.tbl_deep_extend('force', context.config, opts or {})
+  vim.keymap.set({ 'n', 'i', 'v' }, '<C-A-P>', M.search, { silent = true, desc = 'Find in Pathfinder' })
   require('pathfinder.tree.startup').setup(M)
 end
 

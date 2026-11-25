@@ -25,15 +25,19 @@ Pathfinder replaces netrw: it opens with `nvim`, `nvim .`, `nvim /path/to/direct
 | `d` | Delete file or directory after confirmation |
 | `D` | Switch to database UML; enter a URL or a project `.env` variable |
 | `I` | Toggle Git-ignored files |
+| `Ctrl-Alt-P`, `/` | Search file and directory names in the tree |
+| `n` / `N` | Next / previous search match |
 | `p` | Toggle selected file preview on the right |
 | `R` | Refresh tree, preserving expanded nodes |
 | `q`, `Esc`, `Ctrl-P` | Close Pathfinder and return to the original window |
 
 `zR` keeps the selected node. `zM` selects its ancestor in the root directory when necessary. Bulk expansion follows the configured filters and never traverses symbolic links.
 
+`Ctrl-Alt-P` also opens Pathfinder from the editor. Type a name in the command line to reveal matching paths live in the normal tree and highlight matching names (case insensitive, literal substring). Press Enter to navigate results, then Enter on a file to open it in the original editor window. Search respects the explorer filters and does not follow directory symlinks. An empty query clears the highlights and restores the previous expansions; Escape cancels the query edit.
+
 The root path appears in the top bar, with shortcuts in the top bar. Long names are shortened, and the viewport follows the selected node. Movements support counts such as `3j` and stop at the boundaries.
 
-Hidden files and Git-ignored files are visible by default; `.git` is always excluded by the default name filter. Press `I` to hide or show Git-ignored entries. The footer displays `ignored: hidden` or `ignored: shown`. Set `gitignore = true` in `setup()` to start with ignored entries hidden. The filter uses Git itself, including nested ignore files, negation rules, repository excludes, and global excludes; tracked files remain visible. Git must be installed for this filter. `R` reloads the ignore rules after edits. Directories load when expanded and appear before files, sorted by name. Symbolic links remain leaf nodes to prevent cycles. Git status indicators are not included.
+Hidden files are visible by default; Git-ignored files are hidden, and `.git` is always excluded by the default name filter. Press `I` to hide or show Git-ignored entries. The footer displays `ignored: hidden` or `ignored: shown`. Set `gitignore = false` in `setup()` to start with ignored entries visible. The filter uses Git itself, including nested ignore files, negation rules, repository excludes, and global excludes; tracked files remain visible. Git must be installed for this filter. `R` reloads the ignore rules after edits. Directories load when expanded and appear before files, sorted by name. Symbolic links remain leaf nodes to prevent cycles. Git status indicators are not included.
 
 Press `p` to toggle a narrow preview on the right. It follows the selection without taking focus, shows syntax highlighting and loaded unsaved text, and reads at most 64 KiB / 200 lines from disk. Binary files and directories show a placeholder. The preview starts hidden.
 
@@ -133,6 +137,7 @@ nvim --headless -u NONE -l tests/smoke.lua
 nvim --headless -u NONE -l tests/grid.lua
 nvim --headless -u NONE -l tests/actions.lua
 nvim --headless -u NONE -l tests/gitignore.lua
+nvim --headless -u NONE -l tests/search.lua
 nvim --headless -u NONE -l tests/database.lua
 nvim --headless -u NONE -l tests/database_data.lua
 nvim --headless -u NONE -l tests/theme.lua

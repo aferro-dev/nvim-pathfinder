@@ -107,6 +107,7 @@ function M.index_map()
     table.sort(column.edges, function(a, b) return a.first_row < b.first_row end)
     for i, node in ipairs(column) do node.index = i end
   end
+  require('pathfinder.tree.watch').sync()
 end
 
 return M

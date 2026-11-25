@@ -32,7 +32,14 @@ end
 
 function M.refresh()
   local node = current()
-  if node then reload(node.path) end
+  if node then
+    local query = context.state.search_query
+    reload(node.path)
+    if query and query ~= '' then
+      require('pathfinder.tree.search').update(query)
+      render(node.path)
+    end
+  end
 end
 
 local function action_error(message)

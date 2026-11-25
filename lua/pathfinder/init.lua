@@ -26,6 +26,7 @@ function M.close()
   local s = context.state
   if not s then return end
   context.state = nil
+  require('pathfinder.tree.watch').stop(s)
   require('pathfinder.preview').close()
   if api.nvim_win_is_valid(s.win) then api.nvim_win_close(s.win, true) end
   if api.nvim_buf_is_valid(s.buf) then api.nvim_buf_delete(s.buf, { force = true }) end

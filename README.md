@@ -22,6 +22,7 @@ Pathfinder replaces netrw: it opens with `nvim`, `nvim .`, `nvim /path/to/direct
 | `zz` | Center the view vertically and horizontally on the selected node (within map boundaries) |
 | `Backspace`, `-` | Select parent |
 | `a` | Create file or directory |
+| `r` | Rename selected file or directory (updates open buffer paths) |
 | `d` | Delete file or directory after confirmation |
 | `D` | Switch to database UML; enter a URL or a project `.env` variable |
 | `I` | Toggle Git-ignored files |
@@ -136,6 +137,7 @@ For local development, use an absolute source path accessible to the build proce
 nvim --headless -u NONE -l tests/smoke.lua
 nvim --headless -u NONE -l tests/grid.lua
 nvim --headless -u NONE -l tests/actions.lua
+nvim --headless -u NONE -l tests/rename.lua
 nvim --headless -u NONE -l tests/gitignore.lua
 nvim --headless -u NONE -l tests/search.lua
 nvim --headless -u NONE -l tests/database.lua

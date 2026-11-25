@@ -18,7 +18,7 @@ for _, name in ipairs({ 'vertical', 'horizontal', 'parent', 'center', 'toggle_pr
   'set_expanded', 'expand_all', 'collapse_all' }) do
   M[name] = navigation[name]
 end
-for _, name in ipairs({ 'create', 'delete', 'refresh', 'toggle_gitignore' }) do
+for _, name in ipairs({ 'create', 'rename', 'delete', 'refresh', 'toggle_gitignore' }) do
   M[name] = actions[name]
 end
 

@@ -75,6 +75,62 @@ function M.create()
   end)
 end
 
+function M.rename()
+  local node = current()
+  if not node or node == context.state.root then return end
+  local session, old_path = context.state, node.path
+  vim.ui.input({ prompt = 'Rename: ', default = node.name }, function(name)
+    if context.state ~= session or not name or name == '' or name == node.name then return end
+    if name == '.' or name == '..' or name:find('/', 1, true) or name:find('%c') then
+      action_error('Enter a file or directory name without a path')
+      return
+    end
+    local new_path = vim.fs.joinpath(node.parent.path, name)
+    if uv.fs_lstat(new_path) then action_error('Already exists: ' .. new_path); return end
+    local stat = uv.fs_lstat(old_path)
+    if not stat then action_error('No longer exists: ' .. old_path); return end
+    local buffers = {}
+    for _, buf in ipairs(api.nvim_list_bufs()) do
+      local old_name = api.nvim_buf_get_name(buf)
+      local relative = stat.type == 'directory' and vim.fs.relpath(old_path, old_name)
+      if old_name == old_path or relative then
+        local new_name = relative and vim.fs.joinpath(new_path, relative) or new_path
+        local existing = vim.fn.bufnr(new_name)
+        if existing ~= -1 and existing ~= buf then
+          action_error('A buffer already exists for: ' .. new_name)
+          return
+        end
+        buffers[#buffers + 1] = { buf = buf, old = old_name, new = new_name }
+      end
+    end
+    local ok, err = uv.fs_rename(old_path, new_path)
+    if not ok then action_error(tostring(err)); return end
+    for _, entry in ipairs(buffers) do
+      local renamed, rename_err = pcall(api.nvim_buf_set_name, entry.buf, entry.new)
+      if not renamed then
+        uv.fs_rename(new_path, old_path)
+        for _, rollback in ipairs(buffers) do pcall(api.nvim_buf_set_name, rollback.buf, rollback.old) end
+        action_error(tostring(rename_err))
+        return
+      end
+    end
+    -- Preserve expanded descendants under the new directory name.
+    local opened = {}
+    for path, entry in pairs(session.nodes) do
+      local relative = stat.type == 'directory' and vim.fs.relpath(old_path, path)
+      if path == old_path or relative then
+        opened[relative and vim.fs.joinpath(new_path, relative) or new_path] = entry
+      end
+    end
+    for path, entry in pairs(opened) do session.nodes[path] = entry end
+    reload(new_path, true)
+    if session.search_query and session.search_query ~= '' then
+      require('pathfinder.tree.search').update(session.search_query)
+      render(new_path)
+    end
+  end)
+end
+
 function M.delete()
   local node = current()
   if not node or node == context.state.root then return end

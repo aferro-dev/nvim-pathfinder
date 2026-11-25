@@ -60,7 +60,6 @@ assert(vim.wo.winbar == 'Editor bar' and vim.wo.number and vim.wo.winhighlight =
   vim.inspect({ bar = vim.wo.winbar, number = vim.wo.number, hl = vim.wo.winhighlight }))
 -- External pickers use :edit in the originating explorer window.
 p.open({ root = root })
-p.toggle_preview()
 vim.cmd.edit(root .. '/src/deep/Match.lua')
 api.nvim_win_set_cursor(0, { 2, 2 })
 assert(vim.wait(1000, function() return context.state == nil end))

@@ -28,7 +28,6 @@ Pathfinder replaces netrw: it opens with `nvim`, `nvim .`, `nvim /path/to/direct
 | `I` | Toggle Git-ignored files |
 | `Ctrl-Alt-P`, `/` | Search file and directory names in the tree |
 | `n` / `N` | Next / previous search match |
-| `p` | Toggle selected file preview on the right |
 | `R` | Refresh tree, preserving expanded nodes |
 | `q`, `Esc`, `Ctrl-P` | Close Pathfinder and return to the original window |
 
@@ -41,8 +40,6 @@ The root path appears in the top bar, with shortcuts in the top bar. Long names 
 The tree automatically refreshes when files or directories change externally, preserving the selection and expanded paths. Changes are grouped over 100 ms; returning focus to Neovim also refreshes the tree. Only loaded directories are watched, and watchers are released when Pathfinder closes.
 
 Hidden files are visible by default; Git-ignored files are hidden, and `.git` is always excluded by the default name filter. Press `I` to hide or show Git-ignored entries. The footer displays `ignored: hidden` or `ignored: shown`. Set `gitignore = false` in `setup()` to start with ignored entries visible. The filter uses Git itself, including nested ignore files, negation rules, repository excludes, and global excludes; tracked files remain visible. Git must be installed for this filter. `R` reloads the ignore rules after edits. Directories load when expanded and appear before files, sorted by name. Symbolic links remain leaf nodes to prevent cycles. Git status indicators are not included.
-
-Press `p` to toggle a narrow preview on the right. It follows the selection without taking focus, shows syntax highlighting and loaded unsaved text, and reads at most 64 KiB / 200 lines from disk. Binary files and directories show a placeholder. The preview starts hidden.
 
 ## Database UML
 
@@ -146,7 +143,6 @@ nvim --headless -u NONE -l tests/search.lua
 nvim --headless -u NONE -l tests/database.lua
 nvim --headless -u NONE -l tests/database_data.lua
 nvim --headless -u NONE -l tests/theme.lua
-nvim --headless -u NONE -l tests/preview.lua
 python3 tests/startup.py
 ```
 

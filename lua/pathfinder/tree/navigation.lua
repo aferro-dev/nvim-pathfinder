@@ -5,14 +5,6 @@ local model = require('pathfinder.tree.model')
 local current, children, index_map = model.current, model.children, model.index_map
 local render = require('pathfinder.tree.view').render
 
-function M.toggle_preview()
-  local node = current()
-  if not node then return end
-  context.state.preview_enabled = not context.state.preview_enabled
-  if not context.state.preview_enabled then require('pathfinder.preview').close() end
-  render(node.path)
-end
-
 function M.center()
   local node = current()
   if not node then return end

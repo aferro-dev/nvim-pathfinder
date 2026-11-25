@@ -14,7 +14,7 @@ function M.search()
 end
 
 -- Preserve the public API while each module owns one explorer responsibility.
-for _, name in ipairs({ 'vertical', 'horizontal', 'parent', 'center', 'toggle_preview',
+for _, name in ipairs({ 'vertical', 'horizontal', 'parent', 'center',
   'set_expanded', 'expand_all', 'collapse_all' }) do
   M[name] = navigation[name]
 end
@@ -27,7 +27,6 @@ function M.close()
   if not s then return end
   context.state = nil
   require('pathfinder.tree.watch').stop(s)
-  require('pathfinder.preview').close()
   if api.nvim_win_is_valid(s.win) then api.nvim_win_close(s.win, true) end
   if api.nvim_buf_is_valid(s.buf) then api.nvim_buf_delete(s.buf, { force = true }) end
   if api.nvim_win_is_valid(s.origin) then api.nvim_set_current_win(s.origin) end
@@ -74,7 +73,7 @@ function M.open(opts)
   vim.bo[buf].swapfile = false
   require('pathfinder.theme').setup()
   local display_root = vim.fn.fnamemodify(root, ':~'):gsub('%%', '%%%%'):gsub('%%c', ' ')
-  api.nvim_set_option_value('winbar', '%=%#PathfinderSelectedEdge#%#PathfinderBadge# 󰉋 pathfinder %#PathfinderSelectedEdge#%#PathfinderNormal#  %#PathfinderMuted#' .. display_root .. '  p preview  ·  D database  ·  zR/zM expand/collapse all  ·  q close%=', { win = win, scope = 'local' })
+  api.nvim_set_option_value('winbar', '%=%#PathfinderSelectedEdge#%#PathfinderBadge# 󰉋 pathfinder %#PathfinderSelectedEdge#%#PathfinderNormal#  %#PathfinderMuted#' .. display_root .. '  D database  ·  zR/zM expand/collapse all  ·  q close%=', { win = win, scope = 'local' })
   api.nvim_set_option_value('winhighlight', 'Normal:PathfinderNormal,NormalFloat:PathfinderNormal,FloatBorder:PathfinderBorder,WinBar:PathfinderNormal,WinBarNC:PathfinderNormal', { win = win, scope = 'local' })
   vim.wo[win].fillchars = 'eob: '
   vim.wo[win].cursorline = false

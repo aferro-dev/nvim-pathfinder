@@ -13,7 +13,7 @@ function M.attach(buf, explorer)
     zc = function() explorer.set_expanded(false) end,
     zR = explorer.expand_all, zM = explorer.collapse_all, zz = explorer.center,
     a = explorer.create, r = explorer.rename, d = explorer.delete, I = explorer.toggle_gitignore,
-    D = explorer.database, p = explorer.toggle_preview,
+    D = explorer.database,
     ['<C-A-P>'] = explorer.search, ['/'] = explorer.search,
     n = function() require('pathfinder.tree.search').next(1) end,
     N = function() require('pathfinder.tree.search').next(-1) end,
@@ -29,7 +29,7 @@ function M.attach(buf, explorer)
     R = 'Refresh tree', zo = 'Expand node', zc = 'Collapse node',
     zR = 'Expand all nodes', zM = 'Collapse all nodes', zz = 'Center selected node',
     a = 'Create file or directory', r = 'Rename file or directory', d = 'Delete file or directory', I = 'Toggle Git-ignored files',
-    D = 'Switch to database UML', p = 'Toggle file preview',
+    D = 'Switch to database UML',
     ['<C-A-P>'] = 'Find in Pathfinder', ['/'] = 'Find in Pathfinder',
     n = 'Next search match', N = 'Previous search match',
   }

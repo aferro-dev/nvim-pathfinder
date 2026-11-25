@@ -40,7 +40,6 @@ end
 
 function M.dimensions()
   local width = math.max(1, vim.o.columns)
-  if context.state and context.state.preview_enabled then width = width - require('pathfinder.preview').width() end
   return { relative = 'editor', row = 0, col = 0, width = width,
     height = math.max(1, vim.o.lines - vim.o.cmdheight), style = 'minimal', border = 'none', zindex = 50 }
 end
@@ -127,7 +126,6 @@ function M.render(target)
   vim.bo[s.buf].modifiable = false
   api.nvim_win_set_cursor(s.win, { selected.row, selected.cursor_col })
   api.nvim_win_call(s.win, function() vim.fn.winrestview({ topline = 1 }) end)
-  if s.preview_enabled then require('pathfinder.preview').show(s.selected) end
 end
 
 return M

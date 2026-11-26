@@ -58,6 +58,20 @@ assert(api.nvim_get_current_win() == origin)
 assert(api.nvim_buf_get_name(0) == root .. '/src/deep/Match.lua')
 assert(vim.wo.winbar == 'Editor bar' and vim.wo.number and vim.wo.winhighlight == highlights,
   vim.inspect({ bar = vim.wo.winbar, number = vim.wo.number, hl = vim.wo.winhighlight }))
+-- Starting search from a file must enter the explorer before reading a query.
+local prompt_window, prompt_filetype
+local event = api.nvim_create_autocmd('CmdlineEnter', { callback = function()
+  if vim.fn.getcmdtype() == '@' then
+    prompt_window = api.nvim_get_current_win()
+    prompt_filetype = vim.bo.filetype
+  end
+end })
+api.nvim_feedkeys(api.nvim_replace_termcodes('<CR>', true, false, true), 't', false)
+p.search()
+api.nvim_del_autocmd(event)
+assert(prompt_window == context.state.win and prompt_window ~= origin)
+assert(prompt_filetype == 'pathfinder', 'Search must show Pathfinder immediately')
+p.close()
 -- External pickers use :edit in the originating explorer window.
 p.open({ root = root })
 vim.cmd.edit(root .. '/src/deep/Match.lua')

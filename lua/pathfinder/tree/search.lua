@@ -59,6 +59,9 @@ function M.open()
   s.search_prompt = true
   local previous = s.search_query or ''
   api.nvim_set_current_win(s.win)
+  -- Draw the explorer before input() takes over the command line.
+  -- This also flushes the redraw deferred by a silent key mapping.
+  vim.cmd('redraw')
   local event = api.nvim_create_autocmd('CmdlineChanged', { callback = function()
     if context.state == s and vim.fn.getcmdtype() == '@' then
       M.update(vim.fn.getcmdline())

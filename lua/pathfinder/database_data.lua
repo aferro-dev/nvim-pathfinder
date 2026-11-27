@@ -288,7 +288,10 @@ function M.close()
   close_detail(s)
   if s.header and api.nvim_win_is_valid(s.header) then api.nvim_win_close(s.header, true) end
   if api.nvim_win_is_valid(s.win) then api.nvim_win_close(s.win, true) end
-  if api.nvim_win_is_valid(s.origin) then api.nvim_set_current_win(s.origin) end
+  if api.nvim_win_is_valid(s.origin) then
+    if s.hidden_origin then api.nvim_win_set_config(s.origin, { hide = false }) end
+    api.nvim_set_current_win(s.origin)
+  end
 end
 
 local function write_record(s, tbl, original, replacement, on_saved)
@@ -393,6 +396,7 @@ end
 
 
 function M.open(opts)
+  vim.cmd.stopinsert()
   if session then M.close() end
   local origin = api.nvim_get_current_win()
   local buf = api.nvim_create_buf(false, true)
@@ -400,10 +404,15 @@ function M.open(opts)
   session = { buf = buf, win = win, origin = origin, tables = opts.tables, connection = opts.connection,
     index = math.max(1, math.min(opts.index or 1, #opts.tables)), page = 0, rows = {}, label = opts.label, filter = { pattern = '*', kind = nil } }
   local s = session
+  if vim.bo[api.nvim_win_get_buf(origin)].filetype == 'pathfinder_database' then
+    s.hidden_origin = true
+    api.nvim_win_set_config(origin, { hide = true })
+  end
+  vim.wo[win].winblend = 0
   require('pathfinder.theme').setup()
   vim.bo[buf].bufhidden, vim.bo[buf].swapfile, vim.bo[buf].filetype = 'wipe', false, 'pathfinder_database_data'
   vim.wo[win].wrap, vim.wo[win].cursorline, vim.wo[win].sidescrolloff = false, false, 0
-  vim.wo[win].winhighlight = 'Normal:PathfinderNormal,NormalFloat:PathfinderNormal,FloatBorder:PathfinderBorder,FloatTitle:Title,FloatFooter:Comment'
+  vim.wo[win].winhighlight = 'Normal:PathfinderDialog,NormalFloat:PathfinderDialog,FloatBorder:PathfinderDialogBorder,FloatTitle:Title,FloatFooter:Comment,WinBar:PathfinderDialog,WinBarNC:PathfinderDialog'
   vim.wo[win].winbar = '   Data · hjkl: cells · Space/Enter: record · e: edit · dd: delete · Tab: collection · [/]: page · R: reload · q: back'
   if s.connection.kind == 'redis' then
     vim.wo[win].winbar = '   Redis · / search · t type · n new · T TTL · Enter value · dd delete · [/]: page · c connections · q files'
@@ -415,6 +424,7 @@ function M.open(opts)
   end
   s.header = api.nvim_open_win(buf, false, header_layout())
   vim.wo[s.header].wrap, vim.wo[s.header].winbar = false, ''
+  vim.wo[s.header].winblend = 0
   vim.wo[s.header].winhighlight = vim.wo[win].winhighlight
   vim.wo[s.header].sidescrolloff = 0
   local scroll_event = api.nvim_create_autocmd('WinScrolled', { pattern = tostring(win), callback = function()
@@ -468,7 +478,7 @@ function M.open(opts)
     end,
     ['<CR>'] = edit_record, ['<Space>'] = edit_record, e = edit_record, dd = delete_record, R = load, u = function() M.close(); require('pathfinder.database').prompt() end,
     c = function() M.close(); require('pathfinder.database').connections() end,
-    a = function() M.close(); require('pathfinder.database').prompt({ new = true }) end,
+    a = function() end,
   }) do vim.keymap.set('n', key, action, { buffer = buf, silent = true, nowait = true }) end
   if s.connection.kind == 'redis' then
     local function back() M.close(); require('pathfinder.database').close() end
@@ -499,6 +509,7 @@ function M.open(opts)
         end)
       end)
     end, { buffer = buf, silent = true })
+    vim.keymap.set('n', 'a', vim.fn.maparg('n', 'n', false, true).callback, { buffer = buf, silent = true, desc = 'Create Redis string key' })
     vim.keymap.set('n', 'T', function()
       local original = not s.loading and s.rows[s.row or 1]
       if not original or s.writing then return end

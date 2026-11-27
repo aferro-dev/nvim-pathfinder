@@ -118,7 +118,7 @@ local function render()
   local label = selected_profile and selected_profile.name or 'No connection'
   local limit = math.max(8, math.min(30, math.floor(api.nvim_win_get_width(s.win) / 4)))
   if vim.fn.strdisplaywidth(label) > limit then label = vim.fn.strcharpart(label, 0, limit - 1) .. '…' end
-  vim.wo[s.win].winbar = ' ' .. label:gsub('%%', '%%%%') .. '  ·  c connections  ·  a add  ·  u edit  ·  R refresh  ·  Enter detail  ·  v data  ·  D files'
+  vim.wo[s.win].winbar = ' ' .. label:gsub('%%', '%%%%') .. '  ·  c connections  ·  u edit  ·  R refresh  ·  Enter detail  ·  v data  ·  D files'
 
   lines, s.positions, marks = M.diagram(s.visible, api.nvim_win_get_width(s.win), s.expanded, s.index, api.nvim_win_get_height(s.win) - (s.error and 2 or 0))
   if tables and #tables == 0 then lines = { 'No tables found in this database.' } end
@@ -178,7 +178,10 @@ function M.close()
   dismiss_input(s)
   if s.job then s.job:kill(15) end
   if api.nvim_win_is_valid(s.win) then api.nvim_win_close(s.win, true) end
-  if api.nvim_win_is_valid(s.origin) then api.nvim_set_current_win(s.origin) end
+  if api.nvim_win_is_valid(s.origin) then
+    if s.hidden_origin then api.nvim_win_set_config(s.origin, { hide = false }) end
+    api.nvim_set_current_win(s.origin)
+  end
 end
 
 local function open_redis()
@@ -405,6 +408,7 @@ function M.prompt(opts)
 end
 
 function M.connections()
+  vim.cmd.stopinsert()
   local s = session
   if not s or not api.nvim_win_is_valid(s.win) then return end
   if s.loading then
@@ -428,7 +432,8 @@ function M.connections()
   local win = api.nvim_open_win(buf, true, layout())
   s.input = { buf = buf, win = win }
   vim.wo[win].wrap, vim.wo[win].cursorline = false, true
-  vim.wo[win].winhighlight = 'Normal:PathfinderNormal,NormalFloat:PathfinderNormal,FloatBorder:PathfinderBorder'
+  vim.wo[win].winblend, vim.wo[win].winbar = 0, ''
+  vim.wo[win].winhighlight = 'Normal:PathfinderDialog,NormalFloat:PathfinderDialog,FloatBorder:PathfinderDialogBorder,FloatTitle:PathfinderInputLabel,FloatFooter:PathfinderMuted'
   local function draw(index)
     local lines = { '  PROJECT CONNECTIONS', '' }
     for _, profile in ipairs(profiles) do
@@ -492,6 +497,7 @@ function M.connections()
 end
 
 function M.toggle(opts)
+  vim.cmd.stopinsert()
   opts = opts or {}
   if session and api.nvim_win_is_valid(session.win) then M.close(); return end
   local root = opts.root or vim.fs.root(api.nvim_buf_get_name(0) ~= '' and api.nvim_buf_get_name(0) or vim.fn.getcwd(), { '.git', '.env' }) or vim.fn.getcwd()
@@ -510,10 +516,15 @@ function M.toggle(opts)
   local buf = api.nvim_create_buf(false, true)
   local win = api.nvim_open_win(buf, true, dimensions())
   session = { buf = buf, win = win, origin = origin, root = root, expanded = view.expanded, hidden = view.hidden, index = view.index }
+  if vim.bo[api.nvim_win_get_buf(origin)].filetype == 'pathfinder' then
+    session.hidden_origin = true
+    api.nvim_win_set_config(origin, { hide = true })
+  end
+  vim.wo[win].winblend = 0
   vim.bo[buf].bufhidden, vim.bo[buf].swapfile, vim.bo[buf].filetype = 'wipe', false, 'pathfinder_database'
   vim.wo[win].wrap, vim.wo[win].signcolumn = false, 'no'
   api.nvim_set_option_value('winbar', ' Database  ·  hjkl move  ·  Enter detail  ·  v data  ·  Space toggle  ·  zR/zM all  ·  H hide/I restore  ·  u URL  ·  R refresh  ·  D files', { win = win, scope = 'local' })
-  api.nvim_set_option_value('winhighlight', 'Normal:PathfinderNormal,NormalFloat:PathfinderNormal,FloatBorder:PathfinderBorder,FloatTitle:Title,FloatFooter:Comment,WinBar:PathfinderNormal,WinBarNC:PathfinderNormal', { win = win, scope = 'local' })
+  api.nvim_set_option_value('winhighlight', 'Normal:PathfinderDialog,NormalFloat:PathfinderDialog,FloatBorder:PathfinderDialogBorder,FloatTitle:Title,FloatFooter:Comment,WinBar:PathfinderDialog,WinBarNC:PathfinderDialog', { win = win, scope = 'local' })
   local function move(delta)
     if #session.positions == 0 then return end
     session.index = math.max(1, math.min(#session.positions, session.index + delta * vim.v.count1))
@@ -605,7 +616,7 @@ function M.toggle(opts)
     if pos then require('pathfinder.viewport').center(win, pos.col - 2 + (pos.width - 1) / 2) end
   end)
   for key, action in pairs({ v = data, D = M.close, q = M.close, ['<Esc>'] = M.close, ['<C-p>'] = M.close,
-    u = M.prompt, c = M.connections, a = function() M.prompt({ new = true }) end, R = function() if connection then connect(connection) else M.prompt() end end,
+    u = M.prompt, c = M.connections, a = function() end, R = function() if connection then connect(connection) else M.prompt() end end,
     ['<Tab>'] = function() move(1) end, ['<S-Tab>'] = function() move(-1) end,
     h = function() spatial(-1, 0) end, l = function() spatial(1, 0) end,
     j = function() spatial(0, 1) end, k = function() spatial(0, -1) end,
@@ -627,7 +638,9 @@ function M.toggle(opts)
       require('pathfinder.database_data').close()
       dismiss_input(session)
       if session.job then session.job:kill(15) end
+      local closing = session
       session = nil
+      if closing.hidden_origin and api.nvim_win_is_valid(closing.origin) then api.nvim_win_set_config(closing.origin, { hide = false }) end
     end
   end })
   render()

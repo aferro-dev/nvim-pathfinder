@@ -205,6 +205,16 @@ function M.render(schema, viewport, expanded, selected, viewport_height)
 end
 
 function M.details(tbl, schema, database_kind)
+  if database_kind == 'redis' then
+    return { '  Redis · Keyspace', '', '  v: browse keys · edit strings · delete complete keys',
+      '  Types: string, hash, list, set, sorted set, stream.',
+      '  TTL is in seconds; -1 means no expiry.',
+      '  Values are previews: 100 entries or 16 KiB per string.',
+      '  Partial previews cannot be edited or deleted.',
+      '  String updates retain TTL and check for concurrent changes.',
+      '  Binary keys and values use base64 objects.',
+      '  SCAN pages are a live view; changes can move keys between pages.' }
+  end
   if database_kind == 'mongo' then
     local lines = { '  ' .. clean(tbl.name), '', '  COLLECTION · MongoDB',
       '  Fields observed in ' .. tostring(tbl.sample_size or 0) .. ' documents (limit 50).',

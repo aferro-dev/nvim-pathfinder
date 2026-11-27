@@ -46,6 +46,12 @@ function M.apply()
   local info = vim.api.nvim_get_hl(0, { name = 'DiagnosticInfo', link = false })
   local accent = info.fg or 0x61afef
   for name, hl in pairs({
+    PathfinderDialog = { fg = fg, bg = bg, ctermbg = 234 },
+    PathfinderDialogBorder = { fg = blend(bg, fg, 0.3), bg = bg, ctermfg = 240, ctermbg = 234 },
+    PathfinderInput = { fg = fg, bg = blend(bg, accent, 0.07), ctermbg = 235 },
+    PathfinderInputError = { fg = vim.api.nvim_get_hl(0, { name = 'DiagnosticError', link = false }).fg or 0xe06c75, bg = bg, ctermfg = 167, ctermbg = 234 },
+    PathfinderInputBorder = { fg = accent, bg = bg, ctermfg = 81, ctermbg = 234 },
+    PathfinderInputLabel = { fg = accent, bg = bg, bold = true, ctermfg = 81, ctermbg = 234 },
     PathfinderDataText = { fg = fg },
     PathfinderDataStripe = { bg = blend(bg, fg, 0.035), ctermbg = 235 },
     PathfinderDataRow = { bg = blend(bg, accent, 0.13), ctermbg = 236 },

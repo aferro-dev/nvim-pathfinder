@@ -31,6 +31,10 @@ function M.data_command(connection, tbl, page)
       .. ').find({}).sort({_id:1}).skip(' .. offset .. ').limit(' .. (M.page_size + 1)
       .. ').maxTimeMS(10000).toArray(), null, 0, {relaxed:false}));'
     return { 'mongosh', '--quiet', '--norc', connection.url, '--eval', js }, opts
+  elseif connection.kind == 'redis' then
+    if vim.fn.executable('python3') ~= 1 then return nil, 'Redis support requires python3' end
+    opts.stdin = vim.json.encode({ url = connection.url })
+    return { 'python3', vim.fs.joinpath(scripts, 'redis_data.py'), 'data', tostring(M.page_size + 1), tostring(offset) }, opts
   elseif connection.kind == 'sqlite' then
     if vim.fn.executable('python3') ~= 1 then return nil, 'SQLite support requires python3' end
     return { 'python3', vim.fs.joinpath(scripts, 'sqlite_data.py'), connection.path, tbl.name,
@@ -40,6 +44,18 @@ function M.data_command(connection, tbl, page)
 end
 
 function M.write_command(connection, tbl, original, replacement)
+  if connection.kind == 'redis' then
+    if original.truncated ~= false then return nil, 'Partial Redis previews cannot be edited or deleted' end
+    if replacement then
+      if original.type ~= 'string' then return nil, 'Redis editing supports string values only' end
+      for key, value in pairs(original) do
+        if key ~= 'value' and not vim.deep_equal(value, replacement[key]) then return nil, 'Edit the value only; Redis keys and metadata cannot be changed' end
+      end
+      for key in pairs(replacement) do if original[key] == nil then return nil, 'Unknown field: ' .. key end end
+    end
+    return { 'python3', vim.fs.joinpath(scripts, 'redis_data.py'), 'write' },
+      { text = true, timeout = 15000, stdin = vim.json.encode({ url = connection.url, original = original, replacement = replacement }) }
+  end
   local keys = {}
   if connection.kind == 'mongo' then
     if original._id == nil then return nil, 'Record has no _id' end

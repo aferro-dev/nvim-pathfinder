@@ -2,6 +2,7 @@ local M = {}
 local api = vim.api
 local session
 local tables, connection, project_root, active_connection
+local projects, profiles, selected_profile = {}, {}, nil
 local view = { expanded = {}, hidden = {}, index = 1 }
 local source = debug.getinfo(1, 'S').source:sub(2)
 local scripts = vim.fs.joinpath(vim.fs.dirname(vim.fs.dirname(vim.fs.dirname(source))), 'scripts')
@@ -50,6 +51,10 @@ function M.parse_url(url, root)
   if url:match('^postgres://') or url:match('^postgresql://') then
     return { kind = 'postgres', url = url }
   end
+  if url:match('^rediss?://') then
+    if not url:match('^rediss?://[^/]+') then return nil, 'Redis URLs must include a host' end
+    return { kind = 'redis', url = url }
+  end
   if url:match('^mongodb://') or url:match('^mongodb%+srv://') then
     if not url:match('^mongodb[^:]*://[^/]+/[^?]+') then
       return nil, 'MongoDB URLs must include a database name: mongodb://host/database'
@@ -65,7 +70,7 @@ function M.parse_url(url, root)
     if path:sub(1, 1) ~= '/' then path = vim.fs.joinpath(root or vim.fn.getcwd(), path) end
     return { kind = 'sqlite', path = vim.fs.normalize(path) }
   end
-  return nil, 'Use sqlite:///absolute/path.db, sqlite://relative/path.db, postgres://, postgresql://, mongodb:// or mongodb+srv://'
+  return nil, 'Use sqlite:///absolute/path.db, sqlite://relative/path.db, postgres://, postgresql://, mongodb://, mongodb+srv://, redis:// or rediss://'
 end
 
 function M.connection_error(result, url)
@@ -99,6 +104,12 @@ local function render()
   for _, tbl in ipairs(tables or {}) do if not s.hidden[tbl.name] then s.visible[#s.visible + 1] = tbl end end
   s.index = math.min(s.index or 1, math.max(1, #s.visible))
   view = { expanded = s.expanded, hidden = s.hidden, index = s.index }
+  if selected_profile then selected_profile.view = view end
+  local label = selected_profile and selected_profile.name or 'No connection'
+  local limit = math.max(8, math.min(30, math.floor(api.nvim_win_get_width(s.win) / 4)))
+  if vim.fn.strdisplaywidth(label) > limit then label = vim.fn.strcharpart(label, 0, limit - 1) .. '…' end
+  vim.wo[s.win].winbar = ' ' .. label:gsub('%%', '%%%%') .. '  ·  c connections  ·  a add  ·  u edit  ·  R refresh  ·  Enter detail  ·  v data  ·  D files'
+
   lines, s.positions, marks = M.diagram(s.visible, api.nvim_win_get_width(s.win), s.expanded, s.index, api.nvim_win_get_height(s.win) - (s.error and 2 or 0))
   if tables and #tables == 0 then lines = { 'No tables found in this database.' } end
   if not tables then
@@ -162,6 +173,8 @@ end
 
 local function connect(value)
   local s = session
+  local target = s.input and s.input.profile or selected_profile
+  if s.input and s.input.new then target = nil end
   local function fail(message)
     s.loading = false
     s.error = message
@@ -177,6 +190,10 @@ local function connect(value)
   if parsed.kind == 'sqlite' then
     if vim.fn.executable('python3') ~= 1 then fail('SQLite support requires python3'); return end
     command = { 'python3', vim.fs.joinpath(scripts, 'sqlite_schema.py'), parsed.path }
+  elseif parsed.kind == 'redis' then
+    if vim.fn.executable('python3') ~= 1 then fail('Redis support requires python3'); return end
+    command = { 'python3', vim.fs.joinpath(scripts, 'redis_data.py'), 'schema' }
+    opts.stdin = vim.json.encode({ url = parsed.url })
   elseif parsed.kind == 'mongo' then
     if vim.fn.executable('mongosh') ~= 1 then fail('MongoDB support requires mongosh on PATH'); return end
     command = { 'mongosh', '--quiet', '--norc', parsed.url, '--eval',
@@ -203,7 +220,21 @@ local function connect(value)
       end
       local decoded, schema = pcall(vim.json.decode, result.stdout or '')
       if not decoded or type(schema) ~= 'table' then fail('Invalid database schema response'); return end
-      if connection ~= value then s.expanded, s.hidden, s.index = {}, {}, 1 end
+      if not target then
+        for _, profile in ipairs(profiles) do if profile.value == value then target = profile; break end end
+      end
+      if not target then
+        local endpoint = parsed.path or parsed.url:match('^[%w+]+://(.*)$') or parsed.kind
+        endpoint = endpoint:gsub('^.*@', ''):gsub('[?#].*$', '')
+        target = { name = parsed.kind .. ' · ' .. clean(endpoint), view = { expanded = {}, hidden = {}, index = 1 } }
+        profiles[#profiles + 1] = target
+      end
+      if target.value ~= value then target.view = { expanded = {}, hidden = {}, index = 1 } end
+      target.value, target.parsed, target.tables, target.draft = value, parsed, schema, value
+      s.draft, s.new_draft = nil, nil
+      selected_profile = target
+      projects[s.root].active = target
+      s.expanded, s.hidden, s.index = target.view.expanded, target.view.hidden, target.view.index
       tables, connection, active_connection = schema, value, parsed
       dismiss_input(s)
       render()
@@ -212,74 +243,68 @@ local function connect(value)
   if ok then s.job = job else s.loading = false; fail('Could not start the database client') end
 end
 
-function M.prompt()
+function M.prompt(opts)
+  opts = opts or {}
   local s = session
   if not s or not api.nvim_win_is_valid(s.win) then return end
   if s.input and api.nvim_win_is_valid(s.input.win) then
     api.nvim_set_current_win(s.input.win)
     return
   end
-  local function layout()
-    local width = math.max(1, math.min(88, vim.o.columns - 4))
-    local height = math.max(1, math.min(15, vim.o.lines - vim.o.cmdheight - 4))
-    local row = math.max(0, math.floor((vim.o.lines - height - 2) / 2))
-    local col = math.max(0, math.floor((vim.o.columns - width - 2) / 2))
-    return width, height, row, col
+  if opts.new then s.error = nil end
+  local form = require('pathfinder.database_form')
+  local value = opts.new and (s.new_draft or 'DATABASE_URL') or (selected_profile and selected_profile.draft) or s.draft or connection or 'DATABASE_URL'
+  local buf, panel_buf = api.nvim_create_buf(false, true), api.nvim_create_buf(false, true)
+  for _, target in ipairs({ buf, panel_buf }) do
+    vim.bo[target].bufhidden, vim.bo[target].swapfile = 'wipe', false
   end
-  local panel_buf = api.nvim_create_buf(false, true)
-  vim.bo[panel_buf].bufhidden, vim.bo[panel_buf].swapfile = 'wipe', false
-  local width, height, row, col = layout()
-  local panel = api.nvim_open_win(panel_buf, false, {
-    relative = 'editor', row = row, col = col, width = width, height = height,
-    style = 'minimal', border = 'rounded', zindex = 69, focusable = false,
-    title = ' Database connection ', title_pos = 'center',
-  })
-  local function input_dimensions()
-    local w, h, r, c = layout()
-    return { relative = 'editor', row = r + math.min(5, math.max(0, h - 2)),
-      col = c + 1, width = math.max(1, w - 2), height = math.max(1, math.min(3, h - 1)),
-      style = 'minimal', border = 'none', zindex = 70 }
-  end
-  local buf = api.nvim_create_buf(false, true)
-  vim.bo[buf].bufhidden, vim.bo[buf].swapfile = 'wipe', false
-  local value = s.draft or connection or 'DATABASE_URL'
   api.nvim_buf_set_lines(buf, 0, -1, false, { value })
-  local win = api.nvim_open_win(buf, true, input_dimensions())
-  local function refresh()
-    if not api.nvim_buf_is_valid(panel_buf) then return end
-    local status = s.loading and 'Connecting… Esc: cancel request' or s.error or 'Ready to connect'
-    local lines = { '  Connect to your database', '',
-      '  Paste a URL or enter a variable from the project .env.',
-      '  PostgreSQL · MongoDB · SQLite', '  URL / .env variable', '', '', '', '',
-      '  Enter: connect / retry    Esc: back', '', '  ' .. status }
-    -- Wrap diagnostics explicitly so long client errors remain readable.
-    local available = math.max(1, api.nvim_win_get_width(panel) - 4)
-    local wrapped = {}
-    for _, line in ipairs(lines) do
-      while vim.fn.strdisplaywidth(line) > available do
-        local length = vim.fn.strchars(line)
-        while length > 1 and vim.fn.strdisplaywidth(vim.fn.strcharpart(line, 0, length)) > available do length = length - 1 end
-        wrapped[#wrapped + 1] = vim.fn.strcharpart(line, 0, length)
-        line = vim.fn.strcharpart(line, length)
-      end
-      wrapped[#wrapped + 1] = line
-    end
-    vim.bo[panel_buf].modifiable = true
-    api.nvim_buf_set_lines(panel_buf, 0, -1, false, wrapped)
-    vim.bo[panel_buf].modifiable = false
-    vim.wo[panel].wrap = true
+  local function layout()
+    local text = table.concat(api.nvim_buf_get_lines(buf, 0, -1, false), '')
+    return form.layout(vim.o.columns, vim.o.lines - vim.o.cmdheight, text, s.error, s.loading)
   end
-  s.input = { buf = buf, win = win, panel = panel, refresh = refresh }
+  local geometry = layout()
+  geometry.panel.title = opts.new and ' Add connection ' or selected_profile and ' Edit connection ' or ' Connect database '
+  local panel = api.nvim_open_win(panel_buf, false, geometry.panel)
+  geometry.field.win = panel
+  local win = api.nvim_open_win(buf, true, geometry.field)
+  local ns = api.nvim_create_namespace('pathfinder_database_form')
+  local function refresh()
+    if not api.nvim_win_is_valid(panel) or not api.nvim_win_is_valid(win) then return end
+    local updated = layout()
+    updated.panel.title = geometry.panel.title
+    updated.field.win = panel
+    api.nvim_win_set_config(panel, updated.panel)
+    api.nvim_win_set_config(win, updated.field)
+    vim.bo[panel_buf].modifiable = true
+    api.nvim_buf_set_lines(panel_buf, 0, -1, false, updated.lines)
+    vim.bo[panel_buf].modifiable = false
+    api.nvim_buf_clear_namespace(panel_buf, ns, 0, -1)
+    for _, mark in ipairs(updated.marks) do
+      api.nvim_buf_set_extmark(panel_buf, ns, mark[1], 0, { line_hl_group = mark[2] })
+    end
+    vim.wo[win].winhighlight = 'Normal:PathfinderInput,NormalFloat:PathfinderInput,FloatBorder:'
+      .. (s.error and 'PathfinderInputError' or 'PathfinderInputBorder') .. ',FloatTitle:PathfinderInputLabel'
+  end
+  s.input = { buf = buf, win = win, panel = panel, refresh = refresh, profile = selected_profile, new = opts.new }
+  for _, target in ipairs({ win, panel }) do
+    vim.wo[target].winblend = 0
+    vim.wo[target].winbar = ''
+    vim.wo[target].cursorline = false
+    vim.wo[target].signcolumn = 'no'
+    vim.wo[target].number, vim.wo[target].relativenumber = false, false
+    vim.wo[target].foldcolumn = '0'
+  end
+  vim.wo[panel].wrap = false
+  vim.wo[panel].winhighlight = 'Normal:PathfinderDialog,NormalFloat:PathfinderDialog,FloatBorder:PathfinderDialogBorder,FloatTitle:PathfinderInputLabel,FloatFooter:PathfinderMuted'
   vim.wo[win].wrap, vim.wo[win].linebreak = true, false
   vim.wo[win].showbreak = '↪ '
-  vim.wo[win].cursorline = true
-  for _, target in ipairs({ win, panel }) do
-    api.nvim_set_option_value('winhighlight', 'Normal:PathfinderNormal,NormalFloat:PathfinderNormal,FloatBorder:PathfinderBorder,FloatTitle:Title', { win = target, scope = 'local' })
-  end
+  vim.wo[win].sidescrolloff = 0
   refresh()
   local function cancel()
     if session ~= s then return end
-    s.draft = table.concat(api.nvim_buf_get_lines(buf, 0, -1, false), '')
+    local draft = table.concat(api.nvim_buf_get_lines(buf, 0, -1, false), '')
+    if not opts.new and selected_profile then selected_profile.draft = draft elseif opts.new then s.new_draft = draft else s.draft = draft end
     s.request = (s.request or 0) + 1
     if s.job then s.job:kill(15); s.job = nil end
     s.loading = false
@@ -289,21 +314,17 @@ function M.prompt()
   local function submit()
     if session ~= s or not s.input or s.input.buf ~= buf or s.loading then return end
     local value = vim.trim(table.concat(api.nvim_buf_get_lines(buf, 0, -1, false), ''))
-    s.draft = value
+    if not opts.new and selected_profile then selected_profile.draft = value elseif opts.new then s.new_draft = value else s.draft = value end
     if value == '' then s.error = 'Enter a database URL or a .env variable'; refresh(); return end
     connect(value)
   end
+  vim.keymap.set({ 'n', 'i' }, '<C-l>', function() cancel(); M.connections() end, { buffer = buf, silent = true })
   vim.keymap.set({ 'n', 'i' }, '<CR>', submit, { buffer = buf, silent = true, desc = 'Connect to database' })
   for _, key in ipairs({ '<Esc>', '<C-c>' }) do
     vim.keymap.set({ 'n', 'i' }, key, cancel, { buffer = buf, silent = true, nowait = true, desc = 'Cancel database connection' })
   end
-  api.nvim_create_autocmd('VimResized', { buffer = buf, callback = function()
-    if session == s and s.input and s.input.buf == buf and api.nvim_win_is_valid(win) then
-      local w, h, r, c = layout()
-      api.nvim_win_set_config(panel, { width = w, height = h, row = r, col = c })
-      api.nvim_win_set_config(win, input_dimensions())
-      refresh()
-    end
+  api.nvim_create_autocmd({ 'VimResized', 'TextChanged', 'TextChangedI' }, { buffer = buf, callback = function()
+    if session == s and s.input and s.input.buf == buf then refresh() end
   end })
   api.nvim_create_autocmd('WinLeave', { buffer = buf, once = true, callback = function()
     vim.schedule(function()
@@ -317,14 +338,105 @@ function M.prompt()
   vim.cmd('startinsert!')
 end
 
+function M.connections()
+  local s = session
+  if not s or not api.nvim_win_is_valid(s.win) then return end
+  if s.loading then
+    s.request = (s.request or 0) + 1
+    if s.job then s.job:kill(15); s.job = nil end
+    s.loading = false
+  end
+  dismiss_input(s)
+  render()
+  local buf = api.nvim_create_buf(false, true)
+  vim.bo[buf].bufhidden, vim.bo[buf].swapfile = 'wipe', false
+  local function layout()
+    local width = math.max(1, math.min(90, vim.o.columns - 4))
+    local height = math.max(1, math.min(math.max(6, #profiles + 4), vim.o.lines - vim.o.cmdheight - 4))
+    return { relative = 'editor', row = math.max(0, math.floor((vim.o.lines - height - 2) / 2)),
+      col = math.max(0, math.floor((vim.o.columns - width - 2) / 2)), width = width, height = height,
+      style = 'minimal', border = 'rounded', zindex = 70,
+      title = ' Connections · current Neovim session ', title_pos = 'center',
+      footer = ' Enter switch · a add · u edit · r rename · dd remove · Esc back ' }
+  end
+  local win = api.nvim_open_win(buf, true, layout())
+  s.input = { buf = buf, win = win }
+  vim.wo[win].wrap, vim.wo[win].cursorline = false, true
+  vim.wo[win].winhighlight = 'Normal:PathfinderNormal,NormalFloat:PathfinderNormal,FloatBorder:PathfinderBorder'
+  local function draw(index)
+    local lines = { '  PROJECT CONNECTIONS', '' }
+    for _, profile in ipairs(profiles) do
+      lines[#lines + 1] = (profile == selected_profile and '  ● ' or '    ') .. clean(profile.name)
+    end
+    if #profiles == 0 then lines[3] = '  No connections yet. Press a to add one.' end
+    vim.bo[buf].modifiable = true
+    api.nvim_buf_set_lines(buf, 0, -1, false, lines)
+    vim.bo[buf].modifiable = false
+    api.nvim_win_set_cursor(win, { math.min(#lines, math.max(3, (index or 1) + 2)), 0 })
+  end
+  local function current() return profiles[api.nvim_win_get_cursor(win)[1] - 2] end
+  local function activate(profile)
+    if not profile then return end
+    require('pathfinder.database_data').close()
+    selected_profile, projects[s.root].active = profile, profile
+    tables, connection, active_connection = profile.tables, profile.value, profile.parsed
+    view = profile.view
+    s.expanded, s.hidden, s.index = view.expanded, view.hidden, view.index
+    s.error, s.draft = nil, nil
+    dismiss_input(s)
+    render()
+  end
+  local function close() dismiss_input(s) end
+  local actions = {
+    ['<Esc>'] = close, q = close,
+    ['<CR>'] = function() activate(current()) end,
+    a = function() close(); M.prompt({ new = true }) end,
+    u = function() local profile = current(); if profile then activate(profile); M.prompt() end end,
+    r = function()
+      local profile = current()
+      if not profile then return end
+      vim.ui.input({ prompt = 'Connection name: ', default = profile.name }, function(name)
+        if session ~= s or not api.nvim_buf_is_valid(buf) then return end
+        if name and vim.trim(name) ~= '' then profile.name = clean(vim.trim(name)); draw() end
+      end)
+    end,
+    dd = function()
+      local index = api.nvim_win_get_cursor(win)[1] - 2
+      local profile = profiles[index]
+      if not profile then return end
+      table.remove(profiles, index)
+      if profile == selected_profile then
+        selected_profile, projects[s.root].active = nil, nil
+        tables, connection, active_connection = nil, nil, nil
+        s.expanded, s.hidden, s.index, s.error, s.draft = {}, {}, 1, nil, nil
+        render()
+      end
+      draw(index)
+    end,
+  }
+  for key, action in pairs(actions) do vim.keymap.set('n', key, action, { buffer = buf, silent = true, nowait = true }) end
+  api.nvim_create_autocmd('VimResized', { buffer = buf, callback = function()
+    if api.nvim_win_is_valid(win) then api.nvim_win_set_config(win, layout()) end
+  end })
+  api.nvim_create_autocmd('WinClosed', { pattern = tostring(win), once = true, callback = function()
+    if s.input and s.input.buf == buf then s.input = nil end
+  end })
+  draw()
+end
+
 function M.toggle(opts)
   opts = opts or {}
   if session and api.nvim_win_is_valid(session.win) then M.close(); return end
   local root = opts.root or vim.fs.root(api.nvim_buf_get_name(0) ~= '' and api.nvim_buf_get_name(0) or vim.fn.getcwd(), { '.git', '.env' }) or vim.fn.getcwd()
   root = vim.fs.normalize(root)
   if project_root ~= root then
-    tables, connection, project_root, active_connection = nil, nil, root, nil
-    view = { expanded = {}, hidden = {}, index = 1 }
+    project_root = root
+    projects[root] = projects[root] or { entries = {} }
+    profiles, selected_profile = projects[root].entries, projects[root].active
+    tables = selected_profile and selected_profile.tables
+    connection = selected_profile and selected_profile.value
+    active_connection = selected_profile and selected_profile.parsed
+    view = selected_profile and selected_profile.view or { expanded = {}, hidden = {}, index = 1 }
   end
   require('pathfinder.theme').setup()
   local origin = api.nvim_get_current_win()
@@ -426,7 +538,7 @@ function M.toggle(opts)
     if pos then require('pathfinder.viewport').center(win, pos.col - 2 + (pos.width - 1) / 2) end
   end)
   for key, action in pairs({ v = data, D = M.close, q = M.close, ['<Esc>'] = M.close, ['<C-p>'] = M.close,
-    u = M.prompt, R = function() if connection then connect(connection) else M.prompt() end end,
+    u = M.prompt, c = M.connections, a = function() M.prompt({ new = true }) end, R = function() if connection then connect(connection) else M.prompt() end end,
     ['<Tab>'] = function() move(1) end, ['<S-Tab>'] = function() move(-1) end,
     h = function() spatial(-1, 0) end, l = function() spatial(1, 0) end,
     j = function() spatial(0, 1) end, k = function() spatial(0, -1) end,

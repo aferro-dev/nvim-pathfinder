@@ -317,13 +317,15 @@ local function edit_record()
   api.nvim_buf_set_name(buf, 'pathfinder://record/' .. buf .. '/' .. clean(tbl.name):gsub('/', '_'))
   api.nvim_buf_set_lines(buf, 0, -1, false, M.pretty(original))
   vim.bo[buf].modified = false
+  local readonly = s.connection.kind == 'redis' and (original.type ~= 'string' or original.truncated ~= false)
+  if readonly then vim.bo[buf].modifiable, vim.bo[buf].buftype = false, 'nofile' end
   local function layout()
     local w, h = math.max(1, math.min(100, vim.o.columns - 6)), math.max(1, math.min(30, vim.o.lines - vim.o.cmdheight - 6))
     return { relative = 'editor', row = math.max(0, math.floor((vim.o.lines - h - 2) / 2)),
       col = math.max(0, math.floor((vim.o.columns - w - 2) / 2)), width = w, height = h,
       style = 'minimal', border = 'rounded', zindex = 75,
       title = ' ' .. clean(tbl.name) .. ' · Record ' .. (s.page * client.page_size + (s.row or 1)) .. (s.connection.kind == 'mongo' and ' · Extended JSON ' or ' · JSON '),
-      footer = ' :w save · :q close · :q! discard ' }
+      footer = readonly and ' Read-only Redis preview · :q close ' or ' :w save · :q close · :q! discard ' }
   end
   local win = api.nvim_open_win(buf, true, layout())
   s.detail = win
@@ -331,6 +333,7 @@ local function edit_record()
   vim.wo[win].winhighlight = 'Normal:PathfinderNormal,NormalFloat:PathfinderNormal,FloatBorder:PathfinderBorder'
   require('pathfinder.viewport').bind(buf)
   api.nvim_create_autocmd('BufWriteCmd', { buffer = buf, callback = function()
+    if readonly then error('Redis previews are read-only') end
     if session ~= s then error('Database session is closed') end
     if s.writing then error('A database write is already running') end
     local ok, replacement = pcall(vim.json.decode, table.concat(api.nvim_buf_get_lines(buf, 0, -1, false), '\n'))
@@ -377,6 +380,9 @@ function M.open(opts)
   vim.wo[win].wrap, vim.wo[win].cursorline, vim.wo[win].sidescrolloff = false, false, 0
   vim.wo[win].winhighlight = 'Normal:PathfinderNormal,NormalFloat:PathfinderNormal,FloatBorder:PathfinderBorder,FloatTitle:Title,FloatFooter:Comment'
   vim.wo[win].winbar = '   Data · hjkl: cells · Space/Enter: record · e: edit · dd: delete · Tab: collection · [/]: page · R: reload · q: back'
+  if s.connection.kind == 'redis' then
+    vim.wo[win].winbar = '   Redis · Enter: value · e edit string · dd delete · [/]: page · R reload · c connections · q back'
+  end
   local function header_layout()
     return { relative = 'win', win = win, row = 0, col = 0, width = api.nvim_win_get_width(win),
       height = math.min(4, api.nvim_win_get_height(win)), style = 'minimal', border = 'none',
@@ -436,6 +442,8 @@ function M.open(opts)
       end)
     end,
     ['<CR>'] = edit_record, ['<Space>'] = edit_record, e = edit_record, dd = delete_record, R = load, u = function() M.close(); require('pathfinder.database').prompt() end,
+    c = function() M.close(); require('pathfinder.database').connections() end,
+    a = function() M.close(); require('pathfinder.database').prompt({ new = true }) end,
   }) do vim.keymap.set('n', key, action, { buffer = buf, silent = true, nowait = true }) end
   api.nvim_create_autocmd('VimResized', { buffer = buf, callback = function()
     if session == s and api.nvim_win_is_valid(win) then

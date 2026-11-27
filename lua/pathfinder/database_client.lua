@@ -27,7 +27,8 @@ function M.data_command(connection, tbl, page, filter)
     return { 'psql', '--dbname', connection.url, '-X', '-w', '-q', '-A', '-t', '-v', 'ON_ERROR_STOP=1', '-c', sql }, opts
   elseif connection.kind == 'mongo' then
     if vim.fn.executable('mongosh') ~= 1 then return nil, 'MongoDB support requires mongosh on PATH' end
-    local js = 'print(EJSON.stringify(db.getCollection(' .. vim.json.encode(tbl.name)
+    local prefix = connection.database and 'db = db.getSiblingDB(' .. vim.json.encode(connection.database) .. ');' or ''
+    local js = prefix .. 'print(EJSON.stringify(db.getCollection(' .. vim.json.encode(tbl.name)
       .. ').find({}).sort({_id:1}).skip(' .. offset .. ').limit(' .. (M.page_size + 1)
       .. ').maxTimeMS(10000).toArray(), null, 0, {relaxed:false}));'
     return { 'mongosh', '--quiet', '--norc', connection.url, '--eval', js }, opts
@@ -83,7 +84,8 @@ function M.write_command(connection, tbl, original, replacement)
   if connection.kind == 'sqlite' then
     return { 'python3', vim.fs.joinpath(scripts, 'sqlite_write.py'), connection.path }, opts
   elseif connection.kind == 'mongo' then
-    return { 'mongosh', '--quiet', '--norc', connection.url, '--eval', table.concat(vim.fn.readfile(vim.fs.joinpath(scripts, 'mongo_write.js')), '\n') }, opts
+    local prefix = connection.database and 'db = db.getSiblingDB(' .. vim.json.encode(connection.database) .. ');' or ''
+    return { 'mongosh', '--quiet', '--norc', connection.url, '--eval', prefix .. table.concat(vim.fn.readfile(vim.fs.joinpath(scripts, 'mongo_write.js')), '\n') }, opts
   elseif connection.kind == 'postgres' then
     local schema, name = tbl.schema, tbl.table
     if not schema then schema, name = tbl.name:match('^([^.]+)%.(.+)$') end

@@ -192,6 +192,7 @@ local function render()
   if not s or not api.nvim_buf_is_valid(s.buf) then return end
   local tbl = s.tables[s.index]
   local title = tbl and clean(tbl.name) or 'No tables or collections'
+  if s.connection.kind == 'mongo' and s.connection.database then title = clean(s.connection.database) .. ' / ' .. title end
   local lines = { '   ' .. title .. '  [' .. (#s.tables == 0 and 0 or s.index) .. '/' .. #s.tables .. ']  ·  Page ' .. (s.page + 1)
     .. '  ·  ' .. #s.rows .. ' records' .. (s.has_next and '  ·  more →' or ''), '' }
   if s.connection.kind == 'redis' then
@@ -404,7 +405,7 @@ function M.open(opts)
   session = { buf = buf, win = win, origin = origin, tables = opts.tables, connection = opts.connection,
     index = math.max(1, math.min(opts.index or 1, #opts.tables)), page = 0, rows = {}, label = opts.label, filter = { pattern = '*', kind = nil } }
   local s = session
-  if vim.bo[api.nvim_win_get_buf(origin)].filetype == 'pathfinder_database' then
+  if vim.bo[api.nvim_win_get_buf(origin)].filetype == 'pathfinder_database' or vim.bo[api.nvim_win_get_buf(origin)].filetype == 'pathfinder_mongo' then
     s.hidden_origin = true
     api.nvim_win_set_config(origin, { hide = true })
   end

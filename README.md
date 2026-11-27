@@ -71,9 +71,17 @@ Space toggles inline columns; `zo` / `zc` expand or collapse a table, and `zR` /
 
 Redis support requires Python 3 with its standard library. SQLite support requires Python 3 with its standard `sqlite3` module; PostgreSQL requires `psql`, and MongoDB requires `mongosh` on `PATH`. The Nixvim module includes all three dependencies. Other installations must provide them separately. PostgreSQL password prompts are disabled: supply credentials in the URL or through libpq configuration such as `.pgpass`. Connections time out rather than blocking Neovim.
 
+## MongoDB databases and collections
+
+MongoDB opens a collection browser before the document grid. `b` lists accessible databases (`show dbs`); Enter selects a database and lists its collections (`show collections`). `l` returns to collections, and `R` reloads the current list. The selected database is shown in the browser, document grid and connection label. Database selection uses `getSiblingDB`, keeping the original connection URL and authentication options.
+
+On a collection, Enter or `v` opens documents; `q` from the document grid returns to collections. `n` creates a collection, `r` renames it without overwriting another collection, `dd` drops it after confirmation, and `i` shows its indexes. Listing collections requires no document sampling. Empty databases show collection creation instructions. Actions run asynchronously; server permission errors remain visible and the list stays usable. `c` opens connection management; `u` edits the connection; `q` / Esc returns to files.
+
+Editing a connection updates its generated label to the new endpoint. Custom names are preserved and shown alongside the current endpoint. Selecting another MongoDB database updates the active connection for subsequent reads and writes without changing the original `.env` file.
+
 ## Database data
 
-Table and collection names appear in bordered cards with bold headings. The detail modal follows the connected database: SQL tables show columns, keys and relationships; MongoDB collections show top-level fields and BSON types observed in up to 50 documents, plus index names and keys. Sampled fields are not schema constraints; fields absent from the sample are not shown. Press `v` from the detail modal to browse records.
+Table and collection names appear in bordered cards with bold headings. The detail modal follows the connected database: SQL tables show columns, keys and relationships; MongoDB uses the collection browser described above; document columns are discovered from the current page. Press `v` from the detail modal to browse records.
 
 Press `v` in the database overview to browse the selected table or collection. PostgreSQL, MongoDB (including `mongodb+srv://`), SQLite, and Redis are supported. The data view fetches 50 records per page asynchronously, with a 15-second client timeout. PostgreSQL browsing queries use a read-only transaction. MongoDB uses `find()` and [canonical Extended JSON](https://www.mongodb.com/docs/mongodb-shell/reference/ejson/stringify/) to retain BSON types such as ObjectId and dates.
 
@@ -159,6 +167,8 @@ nvim --headless -u NONE -l tests/database_data.lua
 nvim --headless -u NONE -l tests/database_connections.lua
 nvim --headless -u NONE -l tests/database_form.lua
 nvim --headless -u NONE -l tests/database_layers.lua
+nvim --headless -u NONE -l tests/mongo_browser.lua
+node tests/mongo_meta.js
 nvim --headless -u NONE -l tests/database_write.lua
 nvim --headless -u NONE -l tests/theme.lua
 python3 tests/startup.py

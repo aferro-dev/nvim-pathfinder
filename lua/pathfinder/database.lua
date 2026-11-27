@@ -59,7 +59,9 @@ function M.parse_url(url, root)
     if not url:match('^mongodb[^:]*://[^/]+/[^?]+') then
       return nil, 'MongoDB URLs must include a database name: mongodb://host/database'
     end
-    return { kind = 'mongo', url = url }
+    local database = url:match('^mongodb[^:]*://[^/]+/([^?]+)')
+    database = database:gsub('%%(%x%x)', function(hex) return string.char(tonumber(hex, 16)) end)
+    return { kind = 'mongo', url = url, database = database }
   end
   -- Driver-qualified URLs follow SQLAlchemy: three slashes introduce a
   -- relative path, four an absolute path. Keep existing plain sqlite URLs.
@@ -106,6 +108,13 @@ local function dimensions()
     height = math.max(1, vim.o.lines - vim.o.cmdheight), style = 'minimal', border = 'none', zindex = 60 }
 end
 
+local function endpoint(parsed)
+  local label = parsed.path or parsed.url:match('^[%w+]+://(.*)$') or parsed.kind
+  label = label:gsub('^.*@', ''):gsub('[?#].*$', '')
+  if parsed.kind == 'mongo' and parsed.database then label = label:gsub('/.*$', '') .. '/' .. parsed.database end
+  return parsed.kind .. ' · ' .. clean(label)
+end
+
 local function render()
   local s = session
   if not s or not api.nvim_buf_is_valid(s.buf) then return end
@@ -115,7 +124,7 @@ local function render()
   s.index = math.min(s.index or 1, math.max(1, #s.visible))
   view = { expanded = s.expanded, hidden = s.hidden, index = s.index }
   if selected_profile then selected_profile.view = view end
-  local label = selected_profile and selected_profile.name or 'No connection'
+  local label = selected_profile and ((selected_profile.custom_name and selected_profile.name .. ' · ' or '') .. endpoint(selected_profile.parsed)) or 'No connection'
   local limit = math.max(8, math.min(30, math.floor(api.nvim_win_get_width(s.win) / 4)))
   if vim.fn.strdisplaywidth(label) > limit then label = vim.fn.strcharpart(label, 0, limit - 1) .. '…' end
   vim.wo[s.win].winbar = ' ' .. label:gsub('%%', '%%%%') .. '  ·  c connections  ·  u edit  ·  R refresh  ·  Enter detail  ·  v data  ·  D files'
@@ -174,6 +183,7 @@ function M.close()
   local s = session
   if not s then return end
   session = nil
+  require('pathfinder.mongo_browser').close()
   require('pathfinder.database_data').close()
   dismiss_input(s)
   if s.job then s.job:kill(15) end
@@ -184,10 +194,15 @@ function M.close()
   end
 end
 
-local function open_redis()
+local function open_browser()
   if active_connection and active_connection.kind == 'redis' then
     require('pathfinder.database_data').open({ connection = active_connection, tables = tables,
       index = 1, label = selected_profile and selected_profile.name })
+  elseif active_connection and active_connection.kind == 'mongo' then
+    require('pathfinder.mongo_browser').open({ connection = active_connection, changed = function()
+      if selected_profile and not selected_profile.custom_name then selected_profile.name = endpoint(active_connection) end
+      render()
+    end })
   end
 end
 
@@ -217,7 +232,7 @@ local function connect(value)
   elseif parsed.kind == 'mongo' then
     if vim.fn.executable('mongosh') ~= 1 then fail('MongoDB support requires mongosh on PATH'); return end
     command = { 'mongosh', '--quiet', '--norc', parsed.url, '--eval',
-      table.concat(vim.fn.readfile(vim.fs.joinpath(scripts, 'mongo_schema.js')), '\n') }
+      'print(JSON.stringify(db.getCollectionNames().filter(n => !n.startsWith("system.")).sort().map(name => ({name,columns:[],foreign_keys:[]}))));' }
   else
     if vim.fn.executable('psql') ~= 1 then fail('PostgreSQL support requires psql on PATH. Restart Neovim from: nix shell nixpkgs#postgresql'); return end
     command = { 'psql', '--dbname', parsed.url, '-X', '-w', '-q', '-A', '-t', '-v', 'ON_ERROR_STOP=1', '-f', vim.fs.joinpath(scripts, 'postgres_schema.sql') }
@@ -244,12 +259,11 @@ local function connect(value)
         for _, profile in ipairs(profiles) do if profile.value == value then target = profile; break end end
       end
       if not target then
-        local endpoint = parsed.path or parsed.url:match('^[%w+]+://(.*)$') or parsed.kind
-        endpoint = endpoint:gsub('^.*@', ''):gsub('[?#].*$', '')
-        target = { name = parsed.kind .. ' · ' .. clean(endpoint), view = { expanded = {}, hidden = {}, index = 1 } }
+        target = { name = endpoint(parsed), view = { expanded = {}, hidden = {}, index = 1 } }
         profiles[#profiles + 1] = target
       end
       if target.value ~= value then target.view = { expanded = {}, hidden = {}, index = 1 } end
+      if not target.custom_name then target.name = endpoint(parsed) end
       target.value, target.parsed, target.tables, target.draft = value, parsed, schema, value
       s.draft, s.new_draft = nil, nil
       selected_profile = target
@@ -258,7 +272,7 @@ local function connect(value)
       tables, connection, active_connection = schema, value, parsed
       dismiss_input(s)
       render()
-      open_redis()
+      open_browser()
     end)
   end)
   if ok then s.job = job else s.loading = false; fail('Could not start the database client') end
@@ -266,6 +280,8 @@ end
 
 function M.prompt(opts)
   opts = opts or {}
+  require('pathfinder.mongo_browser').close()
+  require('pathfinder.database_data').close()
   local s = session
   if not s or not api.nvim_win_is_valid(s.win) then return end
   if s.input and api.nvim_win_is_valid(s.input.win) then
@@ -376,7 +392,7 @@ function M.prompt(opts)
     s.loading = false
     dismiss_input(s)
     render()
-    if not stay then open_redis() end
+    if not stay then open_browser() end
   end
   local function submit()
     if session ~= s or not s.input or s.input.buf ~= buf or s.loading then return end
@@ -408,6 +424,8 @@ function M.prompt(opts)
 end
 
 function M.connections()
+  require('pathfinder.mongo_browser').close()
+  require('pathfinder.database_data').close()
   vim.cmd.stopinsert()
   local s = session
   if not s or not api.nvim_win_is_valid(s.win) then return end
@@ -437,7 +455,7 @@ function M.connections()
   local function draw(index)
     local lines = { '  PROJECT CONNECTIONS', '' }
     for _, profile in ipairs(profiles) do
-      lines[#lines + 1] = (profile == selected_profile and '  ● ' or '    ') .. clean(profile.name)
+      lines[#lines + 1] = (profile == selected_profile and '  ● ' or '    ') .. clean(profile.name) .. (profile.custom_name and ' · ' .. endpoint(profile.parsed) or '')
     end
     if #profiles == 0 then lines[3] = '  No connections yet. Press a to add one.' end
     vim.bo[buf].modifiable = true
@@ -456,11 +474,11 @@ function M.connections()
     s.error, s.draft = nil, nil
     dismiss_input(s)
     render()
-    if not editing then open_redis() end
+    if not editing then open_browser() end
   end
   local function close() dismiss_input(s) end
   local actions = {
-    ['<Esc>'] = function() close(); open_redis() end, q = function() close(); open_redis() end,
+    ['<Esc>'] = function() close(); open_browser() end, q = function() close(); open_browser() end,
     ['<CR>'] = function() activate(current()) end,
     a = function() close(); M.prompt({ new = true }) end,
     u = function() local profile = current(); if profile then activate(profile, true); M.prompt() end end,
@@ -469,7 +487,7 @@ function M.connections()
       if not profile then return end
       vim.ui.input({ prompt = 'Connection name: ', default = profile.name }, function(name)
         if session ~= s or not api.nvim_buf_is_valid(buf) then return end
-        if name and vim.trim(name) ~= '' then profile.name = clean(vim.trim(name)); draw() end
+        if name and vim.trim(name) ~= '' then profile.name = clean(vim.trim(name)); profile.custom_name = true; draw() end
       end)
     end,
     dd = function()
@@ -635,6 +653,7 @@ function M.toggle(opts)
   end })
   api.nvim_create_autocmd('BufWipeout', { buffer = buf, once = true, callback = function()
     if session and session.buf == buf then
+      require('pathfinder.mongo_browser').close()
       require('pathfinder.database_data').close()
       dismiss_input(session)
       if session.job then session.job:kill(15) end
@@ -644,7 +663,7 @@ function M.toggle(opts)
     end
   end })
   render()
-  if not connection then M.prompt() else open_redis() end
+  if not connection then M.prompt() else open_browser() end
 end
 
 return M

@@ -144,6 +144,7 @@ local function dismiss_input(s)
   if not input then return end
   s.input = nil
   vim.cmd.stopinsert()
+  if input.panel and api.nvim_win_is_valid(input.panel) then api.nvim_win_close(input.panel, true) end
   if api.nvim_win_is_valid(input.win) then api.nvim_win_close(input.win, true) end
   if api.nvim_win_is_valid(s.win) then api.nvim_set_current_win(s.win) end
 end
@@ -162,8 +163,10 @@ end
 local function connect(value)
   local s = session
   local function fail(message)
+    s.loading = false
     s.error = message
     render()
+    if s.input and s.input.refresh then s.input.refresh() end
     notify(message)
   end
   local resolved, resolve_err = M.resolve_url(value, s.root)
@@ -189,6 +192,7 @@ local function connect(value)
   s.error = nil
   s.loading = true
   render()
+  if s.input and s.input.refresh then s.input.refresh() end
   local ok, job = pcall(vim.system, command, opts, function(result)
     vim.schedule(function()
       if session ~= s or s.request ~= request then return end
@@ -201,6 +205,7 @@ local function connect(value)
       if not decoded or type(schema) ~= 'table' then fail('Invalid database schema response'); return end
       if connection ~= value then s.expanded, s.hidden, s.index = {}, {}, 1 end
       tables, connection, active_connection = schema, value, parsed
+      dismiss_input(s)
       render()
     end)
   end)
@@ -214,27 +219,78 @@ function M.prompt()
     api.nvim_set_current_win(s.input.win)
     return
   end
+  local function layout()
+    local width = math.max(1, math.min(88, vim.o.columns - 4))
+    local height = math.max(1, math.min(15, vim.o.lines - vim.o.cmdheight - 4))
+    local row = math.max(0, math.floor((vim.o.lines - height - 2) / 2))
+    local col = math.max(0, math.floor((vim.o.columns - width - 2) / 2))
+    return width, height, row, col
+  end
+  local panel_buf = api.nvim_create_buf(false, true)
+  vim.bo[panel_buf].bufhidden, vim.bo[panel_buf].swapfile = 'wipe', false
+  local width, height, row, col = layout()
+  local panel = api.nvim_open_win(panel_buf, false, {
+    relative = 'editor', row = row, col = col, width = width, height = height,
+    style = 'minimal', border = 'rounded', zindex = 69, focusable = false,
+    title = ' Database connection ', title_pos = 'center',
+  })
   local function input_dimensions()
-    local width = math.max(1, math.min(68, vim.o.columns - 4))
-    return { relative = 'editor', row = math.max(0, math.floor((vim.o.lines - 5) / 2)),
-      col = math.max(0, math.floor((vim.o.columns - width - 2) / 2)), width = width, height = 1,
-      style = 'minimal', border = 'rounded', zindex = 70,
-      title = ' Database URL / .env variable ', title_pos = 'center',
-      footer = ' Enter: connect · Esc: cancel ', footer_pos = 'center' }
+    local w, h, r, c = layout()
+    return { relative = 'editor', row = r + math.min(5, math.max(0, h - 2)),
+      col = c + 1, width = math.max(1, w - 2), height = math.max(1, math.min(3, h - 1)),
+      style = 'minimal', border = 'none', zindex = 70 }
   end
   local buf = api.nvim_create_buf(false, true)
   vim.bo[buf].bufhidden, vim.bo[buf].swapfile = 'wipe', false
-  api.nvim_buf_set_lines(buf, 0, -1, false, { 'DATABASE_URL' })
+  local value = s.draft or connection or 'DATABASE_URL'
+  api.nvim_buf_set_lines(buf, 0, -1, false, { value })
   local win = api.nvim_open_win(buf, true, input_dimensions())
-  s.input = { buf = buf, win = win }
-  vim.wo[win].wrap = false
-  api.nvim_set_option_value('winhighlight', 'Normal:PathfinderNormal,NormalFloat:PathfinderNormal,FloatBorder:PathfinderBorder,FloatTitle:Title,FloatFooter:Comment,WinBar:PathfinderNormal,WinBarNC:PathfinderNormal', { win = win, scope = 'local' })
-  local function cancel() if session == s then dismiss_input(s) end end
-  local function submit()
-    if session ~= s or not s.input or s.input.buf ~= buf then return end
-    local value = vim.trim(api.nvim_buf_get_lines(buf, 0, 1, false)[1] or '')
-    if value == '' then return end
+  local function refresh()
+    if not api.nvim_buf_is_valid(panel_buf) then return end
+    local status = s.loading and 'Connecting… Esc: cancel request' or s.error or 'Ready to connect'
+    local lines = { '  Connect to your database', '',
+      '  Paste a URL or enter a variable from the project .env.',
+      '  PostgreSQL · MongoDB · SQLite', '  URL / .env variable', '', '', '', '',
+      '  Enter: connect / retry    Esc: back', '', '  ' .. status }
+    -- Wrap diagnostics explicitly so long client errors remain readable.
+    local available = math.max(1, api.nvim_win_get_width(panel) - 4)
+    local wrapped = {}
+    for _, line in ipairs(lines) do
+      while vim.fn.strdisplaywidth(line) > available do
+        local length = vim.fn.strchars(line)
+        while length > 1 and vim.fn.strdisplaywidth(vim.fn.strcharpart(line, 0, length)) > available do length = length - 1 end
+        wrapped[#wrapped + 1] = vim.fn.strcharpart(line, 0, length)
+        line = vim.fn.strcharpart(line, length)
+      end
+      wrapped[#wrapped + 1] = line
+    end
+    vim.bo[panel_buf].modifiable = true
+    api.nvim_buf_set_lines(panel_buf, 0, -1, false, wrapped)
+    vim.bo[panel_buf].modifiable = false
+    vim.wo[panel].wrap = true
+  end
+  s.input = { buf = buf, win = win, panel = panel, refresh = refresh }
+  vim.wo[win].wrap, vim.wo[win].linebreak = true, false
+  vim.wo[win].showbreak = '↪ '
+  vim.wo[win].cursorline = true
+  for _, target in ipairs({ win, panel }) do
+    api.nvim_set_option_value('winhighlight', 'Normal:PathfinderNormal,NormalFloat:PathfinderNormal,FloatBorder:PathfinderBorder,FloatTitle:Title', { win = target, scope = 'local' })
+  end
+  refresh()
+  local function cancel()
+    if session ~= s then return end
+    s.draft = table.concat(api.nvim_buf_get_lines(buf, 0, -1, false), '')
+    s.request = (s.request or 0) + 1
+    if s.job then s.job:kill(15); s.job = nil end
+    s.loading = false
     dismiss_input(s)
+    render()
+  end
+  local function submit()
+    if session ~= s or not s.input or s.input.buf ~= buf or s.loading then return end
+    local value = vim.trim(table.concat(api.nvim_buf_get_lines(buf, 0, -1, false), ''))
+    s.draft = value
+    if value == '' then s.error = 'Enter a database URL or a .env variable'; refresh(); return end
     connect(value)
   end
   vim.keymap.set({ 'n', 'i' }, '<CR>', submit, { buffer = buf, silent = true, desc = 'Connect to database' })
@@ -243,18 +299,21 @@ function M.prompt()
   end
   api.nvim_create_autocmd('VimResized', { buffer = buf, callback = function()
     if session == s and s.input and s.input.buf == buf and api.nvim_win_is_valid(win) then
+      local w, h, r, c = layout()
+      api.nvim_win_set_config(panel, { width = w, height = h, row = r, col = c })
       api.nvim_win_set_config(win, input_dimensions())
+      refresh()
     end
   end })
   api.nvim_create_autocmd('WinLeave', { buffer = buf, once = true, callback = function()
     vim.schedule(function()
-      if session == s and s.input and s.input.buf == buf then dismiss_input(s) end
+      if session == s and s.input and s.input.buf == buf then cancel() end
     end)
   end })
   api.nvim_create_autocmd('BufWipeout', { buffer = buf, once = true, callback = function()
     if s.input and s.input.buf == buf then s.input = nil end
   end })
-  api.nvim_win_set_cursor(win, { 1, #'DATABASE_URL' })
+  api.nvim_win_set_cursor(win, { 1, #value })
   vim.cmd('startinsert!')
 end
 

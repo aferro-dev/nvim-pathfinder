@@ -43,7 +43,8 @@ Hidden files are visible by default; Git-ignored files are hidden, and `.git` is
 
 ## Database UML
 
-Press `D` in the file tree, or run `:PathfinderDatabase`. A centered modal opens with `DATABASE_URL` prefilled. Enter a connection URL or a variable from the project root's `.env` file; press Enter to connect or Esc to cancel:
+Press `D` in the file tree, or run `:PathfinderDatabase`. A centered modal opens with `DATABASE_URL` prefilled. Enter a connection URL or a variable from the project root's `.env` file; press Enter to connect or Esc to cancel. The connection panel wraps long URLs with a continuation arrow and shows connection status. Failed attempts keep your input editable: correct it and press Enter to retry. Esc cancels an active request; reopening the panel restores your last input:
+
 
 ```text
 DATABASE_URL

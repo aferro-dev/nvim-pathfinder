@@ -136,7 +136,18 @@ db.prompt()
 submit('sqlite://' .. root .. '/missing.db')
 assert(vim.wait(5000, function() return table.concat(notices):find('Database connection failed', 1, true) ~= nil end))
 assert(not vim.uv.fs_stat(root .. '/missing.db'))
-assert(content():find('posts', 1, true)) -- failed connections preserve the loaded schema
+assert(content() == 'sqlite://' .. root .. '/missing.db') -- failed input stays editable
+assert(vim.wo.wrap and vim.api.nvim_win_get_height(0) >= 3)
+local failed_buf = vim.api.nvim_get_current_buf()
+submit('mysql://invalid/db') -- validation errors also allow another attempt
+assert(vim.api.nvim_get_current_buf() == failed_buf)
+submit('DATABASE_URL')
+assert(vim.wait(5000, function() return content():find('› posts', 1, true) ~= nil end))
+-- Reopening retains the last submitted value.
+db.prompt()
+assert(content() == 'DATABASE_URL')
+vim.fn.maparg('<Esc>', 'i', false, true).callback()
+assert(content():find('posts', 1, true))
 -- PostgreSQL URLs must be supplied as dbname so libpq expands all connection parameters.
 local original_system, original_executable = vim.system, vim.fn.executable
 local pending, killed
@@ -155,6 +166,15 @@ db.prompt()
 submit('postgresql://user:secret@localhost/db?sslmode=disable')
 pending({ code = 0, stdout = vim.json.encode({ { name = 'public.accounts', columns = { { name = 'id', type = 'uuid', pk = true, nullable = false } }, foreign_keys = {} } }) })
 assert(vim.wait(1000, function() return content():find('› accounts', 1, true) ~= nil end))
+db.prompt()
+submit('postgresql://user:secret@localhost/db?sslmode=disable')
+local cancelled = pending
+vim.fn.maparg('<Esc>', 'i', false, true).callback()
+assert(killed)
+cancelled({ code = 0, stdout = '[]' })
+vim.wait(30, function() return false end)
+assert(content():find('› accounts', 1, true)) -- cancelled responses cannot replace the schema
+killed = false
 db.prompt()
 submit('postgresql://user:secret@localhost/db?sslmode=disable')
 db.close()

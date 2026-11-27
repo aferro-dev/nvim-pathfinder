@@ -1,6 +1,16 @@
 vim.opt.runtimepath:prepend(vim.fn.getcwd())
 local db = require('pathfinder.database')
 assert(db.parse_url('sqlite:///tmp/example.db').path == '/tmp/example.db')
+assert(db.parse_url('sqlite+aiosqlite:///./knowledge.db', '/tmp/project').path == '/tmp/project/knowledge.db')
+assert(db.parse_url('sqlite+aiosqlite:///knowledge.db', '/tmp/project').path == '/tmp/project/knowledge.db')
+assert(db.parse_url('sqlite+aiosqlite:////tmp/knowledge.db', '/other').path == '/tmp/knowledge.db')
+assert(db.parse_url('sqlite+pysqlite:///sub/knowledge%20base.db', '/tmp/project').path == '/tmp/project/sub/knowledge base.db')
+assert(not db.parse_url('sqlite+aiosqlite:///:memory:'))
+assert(not db.parse_url('sqlite+aiosqlite:///'))
+assert(not db.parse_url('sqlite+aiosqlite://host/file.db'))
+assert(not db.parse_url('sqlite+aiosqlite:///db?mode=ro'))
+assert(not db.parse_url('sqlite+unknown:///knowledge.db'))
+
 assert(db.parse_url('postgres://user:secret@localhost/db').kind == 'postgres')
 assert(db.parse_url('postgresql://localhost/db').kind == 'postgres')
 assert(not db.parse_url('mysql://localhost/db'))
@@ -63,6 +73,7 @@ assert(#small_graph == #overview) -- no added vertical spacing when the graph ov
 local root = vim.fn.tempname()
 vim.fn.mkdir(root, 'p')
 local path = root .. '/schema with spaces.db'
+local sqlalchemy_url = 'sqlite+aiosqlite:///./schema%20with%20spaces.db'
 local create = [[import sqlite3,sys
 c=sqlite3.connect(sys.argv[1])
 c.executescript('CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT NOT NULL); CREATE TABLE posts (id INTEGER PRIMARY KEY, author_id INTEGER REFERENCES users, title TEXT); ')
@@ -93,7 +104,7 @@ local tree = vim.api.nvim_get_current_buf()
 local tree_content = vim.api.nvim_buf_get_lines(tree, 0, -1, false)
 local function content() return table.concat(vim.api.nvim_buf_get_lines(0, 0, -1, false), '\n') end
 db.toggle({ root = root })
-submit('DATABASE_URL')
+submit(sqlalchemy_url)
 assert(vim.wait(5000, function() return content():find('› posts', 1, true) ~= nil end))
 assert(vim.api.nvim_win_get_config(0).border == 'none')
 assert(not content():find('author_id', 1, true))

@@ -63,10 +63,19 @@ wait('› second')
 if vim.env.REDIS_TEST_URL then
   key('a')
   submit(vim.env.REDIS_TEST_URL)
-  wait('› Keys')
-  assert(vim.wo.winbar:find('redis', 1, true))
-  key('v')
   wait('ttl')
+  assert(vim.bo.filetype == 'pathfinder_database_data') -- Redis opens directly, without a UML card
+  assert(vim.wo.winbar:find('Redis', 1, true))
+  local ui_input, ui_select = vim.ui.input, vim.ui.select
+  vim.ui.input = function(_, callback) callback('pathfinder-test:*') end
+  key('/')
+  wait('ttl')
+  assert(content():find('Match: pathfinder-test:*', 1, true))
+  vim.ui.select = function(_, _, callback) callback('string') end
+  key('t')
+  wait('ttl')
+  assert(content():find('Type: string', 1, true))
+  vim.ui.input, vim.ui.select = ui_input, ui_select
   key('<CR>')
   -- Non-string and truncated records are protected; complete strings are editable.
   local record = vim.json.decode(table.concat(api.nvim_buf_get_lines(0, 0, -1, false), '\n'))
@@ -93,9 +102,29 @@ if vim.env.REDIS_TEST_URL then
   vim.cmd('write')
   assert(not vim.bo.modified)
   vim.cmd('q')
+  vim.ui.input = function(_, callback) callback('pathfinder-test:ui-new') end
+  key('/')
+  wait('No records on this page')
+  local answers = { 'pathfinder-test:ui-new', 'created from UI' }
+  vim.ui.input = function(_, callback) callback(table.remove(answers, 1)) end
+  key('n')
+  wait('created from UI')
+  vim.ui.input = function(_, callback) callback('120') end
+  key('T')
+  wait('120')
+  vim.ui.input = ui_input
   key('c')
   assert(content():find('second.db', 1, true) and content():find('redis', 1, true))
   assert(not content():find('pathfinder-test', 1, true))
+  key('<Esc>')
+  wait('ttl')
+  assert(vim.bo.filetype == 'pathfinder_database_data')
+  db.close()
+  db.toggle({ root = root })
+  wait('ttl')
+  assert(vim.bo.filetype == 'pathfinder_database_data') -- cached Redis also opens the browser
+  key('q')
+  assert(vim.bo.filetype ~= 'pathfinder_database_data')
 end
 db.close()
 vim.fn.delete(root, 'rf')

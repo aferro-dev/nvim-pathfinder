@@ -194,6 +194,12 @@ local function render()
   local title = tbl and clean(tbl.name) or 'No tables or collections'
   local lines = { '   ' .. title .. '  [' .. (#s.tables == 0 and 0 or s.index) .. '/' .. #s.tables .. ']  ·  Page ' .. (s.page + 1)
     .. '  ·  ' .. #s.rows .. ' records' .. (s.has_next and '  ·  more →' or ''), '' }
+  if s.connection.kind == 'redis' then
+    lines[1] = '   Redis · ' .. clean(s.label or 'Keys') .. ' · Page ' .. (s.page + 1)
+      .. ' · ' .. #s.rows .. ' keys' .. (s.has_next and ' · more →' or '')
+    lines[2] = '   Match: ' .. clean(s.filter.pattern) .. '   Type: ' .. (s.filter.kind or 'all')
+      .. '   / filter · t type · n new · T TTL · Enter value'
+  end
   s.grid = nil
   if s.loading then lines[#lines + 1] = '  Loading…'
   elseif s.error then lines[#lines + 1] = '  ' .. s.error
@@ -237,7 +243,7 @@ local function load()
   s.row = 1
   local tbl = s.tables[s.index]
   if not tbl then render(); return end
-  local command, opts = client.data_command(s.connection, tbl, s.page)
+  local command, opts = client.data_command(s.connection, tbl, s.page, s.filter)
   if not command then s.error = opts; render(); return end
   s.loading = true
   render()
@@ -367,13 +373,32 @@ local function delete_record()
 end
 
 
+local function redis_mutation(s, mode, payload)
+  if session ~= s or s.writing then return end
+  local command, opts = client.redis_command(s.connection, mode, payload)
+  s.writing = true
+  local ok, job = pcall(vim.system, command, opts, function(result)
+    vim.schedule(function()
+      if session ~= s then return end
+      s.writing, s.write_job = false, nil
+      if result.code ~= 0 then
+        vim.notify('Pathfinder: ' .. require('pathfinder.database').connection_error(result, s.connection.url), vim.log.levels.ERROR)
+      else
+        load()
+      end
+    end)
+  end)
+  if ok then s.write_job = job else s.writing = false; vim.notify('Pathfinder: Could not start Redis client', vim.log.levels.ERROR) end
+end
+
+
 function M.open(opts)
   if session then M.close() end
   local origin = api.nvim_get_current_win()
   local buf = api.nvim_create_buf(false, true)
   local win = api.nvim_open_win(buf, true, dimensions())
   session = { buf = buf, win = win, origin = origin, tables = opts.tables, connection = opts.connection,
-    index = math.max(1, math.min(opts.index or 1, #opts.tables)), page = 0, rows = {} }
+    index = math.max(1, math.min(opts.index or 1, #opts.tables)), page = 0, rows = {}, label = opts.label, filter = { pattern = '*', kind = nil } }
   local s = session
   require('pathfinder.theme').setup()
   vim.bo[buf].bufhidden, vim.bo[buf].swapfile, vim.bo[buf].filetype = 'wipe', false, 'pathfinder_database_data'
@@ -381,7 +406,7 @@ function M.open(opts)
   vim.wo[win].winhighlight = 'Normal:PathfinderNormal,NormalFloat:PathfinderNormal,FloatBorder:PathfinderBorder,FloatTitle:Title,FloatFooter:Comment'
   vim.wo[win].winbar = '   Data · hjkl: cells · Space/Enter: record · e: edit · dd: delete · Tab: collection · [/]: page · R: reload · q: back'
   if s.connection.kind == 'redis' then
-    vim.wo[win].winbar = '   Redis · Enter: value · e edit string · dd delete · [/]: page · R reload · c connections · q back'
+    vim.wo[win].winbar = '   Redis · / search · t type · n new · T TTL · Enter value · dd delete · [/]: page · c connections · q files'
   end
   local function header_layout()
     return { relative = 'win', win = win, row = 0, col = 0, width = api.nvim_win_get_width(win),
@@ -445,6 +470,49 @@ function M.open(opts)
     c = function() M.close(); require('pathfinder.database').connections() end,
     a = function() M.close(); require('pathfinder.database').prompt({ new = true }) end,
   }) do vim.keymap.set('n', key, action, { buffer = buf, silent = true, nowait = true }) end
+  if s.connection.kind == 'redis' then
+    local function back() M.close(); require('pathfinder.database').close() end
+    for _, key in ipairs({ 'q', '<Esc>', 'D', '<C-p>', 'v' }) do
+      vim.keymap.set('n', key, back, { buffer = buf, silent = true })
+    end
+    vim.keymap.set('n', '/', function()
+      vim.ui.input({ prompt = 'Redis key pattern (* matches all): ', default = s.filter.pattern }, function(pattern)
+        if session ~= s or pattern == nil then return end
+        s.filter.pattern, s.page = pattern == '' and '*' or pattern, 0
+        load()
+      end)
+    end, { buffer = buf, silent = true })
+    vim.keymap.set('n', 't', function()
+      vim.ui.select({ 'all', 'string', 'hash', 'list', 'set', 'zset', 'stream' }, { prompt = 'Redis value type' }, function(kind)
+        if session ~= s or not kind then return end
+        s.filter.kind, s.page = kind ~= 'all' and kind or nil, 0
+        load()
+      end)
+    end, { buffer = buf, silent = true })
+    vim.keymap.set('n', 'n', function()
+      if s.writing then return end
+      vim.ui.input({ prompt = 'New Redis string key: ' }, function(key)
+        if session ~= s or not key or key == '' then return end
+        vim.ui.input({ prompt = 'Value: ' }, function(value)
+          if session ~= s or value == nil then return end
+          redis_mutation(s, 'create', { key = key, value = value })
+        end)
+      end)
+    end, { buffer = buf, silent = true })
+    vim.keymap.set('n', 'T', function()
+      local original = not s.loading and s.rows[s.row or 1]
+      if not original or s.writing then return end
+      vim.ui.input({ prompt = 'TTL in seconds (-1 removes expiry): ', default = tostring(original.ttl) }, function(value)
+        if session ~= s or value == nil then return end
+        local ttl = tonumber(value)
+        if not ttl or ttl ~= math.floor(ttl) or ttl < -1 or ttl == 0 then
+          vim.notify('Pathfinder: Enter positive seconds or -1 for no expiry', vim.log.levels.ERROR)
+          return
+        end
+        redis_mutation(s, 'write', { original = original, action = 'expiry', ttl = ttl })
+      end)
+    end, { buffer = buf, silent = true })
+  end
   api.nvim_create_autocmd('VimResized', { buffer = buf, callback = function()
     if session == s and api.nvim_win_is_valid(win) then
       api.nvim_win_set_config(win, dimensions())

@@ -23,9 +23,9 @@ def command(*args):
     return client.call(*args)
 
 
-def run(mode, *args, connection=url):
+def run(mode, *args, connection=url, pattern="*", kind=None):
     return subprocess.run([sys.executable, str(repo / 'scripts/redis_data.py'), mode, *map(str, args)],
-                          input=json.dumps({'url': connection}), capture_output=True, text=True, timeout=20)
+                          input=json.dumps({'url': connection, 'pattern': pattern, 'kind': kind}), capture_output=True, text=True, timeout=20)
 
 
 try:
@@ -58,6 +58,9 @@ try:
     assert len(by_key[prefix + 'long']['value']) == 16384
     assert 0 < by_key[prefix + 'expiring']['ttl'] <= 120
     assert any(isinstance(row['key'], dict) and row['value'] == {'base64': 'AP8='} for row in rows)
+    filtered = json.loads(run('data', 100, 0, pattern=prefix + 's*', kind='string').stdout)
+    assert [row['key'] for row in filtered] == [prefix + 'string']
+    assert json.loads(run('data', 100, 0, pattern=prefix + 'missing:*').stdout) == []
     first = json.loads(run('data', 51, 0).stdout)
     second = json.loads(run('data', 51, 50).stdout)
     assert len(first) == 51 and len(second) >= 24
@@ -83,6 +86,20 @@ try:
     assert write(binary, dict(binary, value={'base64': 'AP8B'})).returncode == 0
     assert client.call('GET', b'pathfinder-test:binary\xff') == b'\x00\xff\x01'
     assert write(by_key[prefix + 'string'], dict(by_key[prefix + 'string'], key='renamed')).returncode != 0
+    def mutate(mode, payload):
+        return subprocess.run([sys.executable, str(repo / 'scripts/redis_data.py'), mode],
+                              input=json.dumps(dict(payload, url=url)), capture_output=True, text=True, timeout=20)
+    key = prefix + 'created'
+    created.append(key)
+    assert mutate('create', {'key': key, 'value': 'new'}).returncode == 0
+    assert mutate('create', {'key': key, 'value': 'overwrite'}).returncode != 0
+    assert client.call('GET', key) == b'new'
+    original = redis_data.record(client, key.encode())
+    assert mutate('write', {'original': original, 'action': 'expiry', 'ttl': 60}).returncode == 0
+    assert 0 < client.call('TTL', key) <= 60
+    assert mutate('write', {'original': original, 'action': 'expiry', 'ttl': -1}).returncode == 0
+    assert client.call('TTL', key) == -1
+    assert mutate('write', {'original': original, 'action': 'expiry', 'ttl': 0}).returncode != 0
     wrong = run('schema', connection=url.replace('pathfinder-test@', 'wrong-secret@'))
     assert wrong.returncode != 0 and 'WRONGPASS' in wrong.stderr
     assert 'wrong-secret' not in wrong.stderr
@@ -103,12 +120,15 @@ try:
         context.return_value.wrap_socket.assert_called_once_with(fake, server_hostname='redis.example')
         tls.close()
     env = dict(os.environ, REDIS_TEST_URL=url, NVIM_LOG_FILE='/tmp/pathfinder-redis-test.log')
+    created.append(prefix + 'ui-new')
     ui = subprocess.run(['nvim', '--headless', '-u', 'NONE', '-l', 'tests/database_connections.lua'],
                         cwd=repo, env=env, capture_output=True, text=True, timeout=20)
     assert ui.returncode == 0, ui.stdout + ui.stderr
     assert client.call('GET', prefix + 'string') == b'saved in Neovim'
+    assert client.call('GET', prefix + 'ui-new') == b'created from UI'
+    assert 0 < client.call('TTL', prefix + 'ui-new') <= 120
     print(ui.stdout + ui.stderr)
-    print('Redis: authentication, database selection, all six types, binary values, previews, pagination, edits, TTL preservation, deletion, conflicts, TLS configuration and UI passed')
+    print('Redis: authentication, database selection, all six types, binary values, previews, pagination, filters, creation, TTL updates, edits, deletion, conflicts, TLS configuration and UI passed')
 finally:
     for key in set(created):
         client.call('DEL', key)

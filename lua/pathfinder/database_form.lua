@@ -1,4 +1,20 @@
 local M = {}
+M.types = {
+  { kind = 'postgres', name = 'PostgreSQL', default = 'postgresql://localhost:5432/postgres' },
+  { kind = 'mongo', name = 'MongoDB', default = 'mongodb://localhost:27017/mydb' },
+  { kind = 'sqlite', name = 'SQLite', default = 'sqlite://./knowledge.db' },
+  { kind = 'redis', name = 'Redis', default = 'redis://localhost:6379/0' },
+}
+function M.detect(value)
+  if value:match('^postgres[^:]*://') then return 'postgres' end
+  if value:match('^mongodb[^:]*://') then return 'mongo' end
+  if value:match('^sqlite[^:]*:') then return 'sqlite' end
+  if value:match('^rediss?://') then return 'redis' end
+end
+function M.type(kind)
+  for i, entry in ipairs(M.types) do if entry.kind == kind then return entry, i end end
+  return M.types[1], 1
+end
 
 local function truncate(text, width)
   if vim.fn.strdisplaywidth(text) <= width then return text end
@@ -24,7 +40,7 @@ local function wrap(text, width)
 end
 
 -- One layout calculation owns both surfaces, including status and input wrapping.
-function M.layout(columns, rows, value, error, loading)
+function M.layout(columns, rows, value, error, loading, kind)
   local width = math.max(12, math.min(76, columns - 6))
   width = math.min(width, math.max(1, columns - 2))
   local inner = math.max(1, width - 6)
@@ -43,11 +59,25 @@ function M.layout(columns, rows, value, error, loading)
     lines[row + 1] = '  ' .. truncate(text, math.max(1, width - 4))
     marks[#marks + 1] = { row, group }
   end
+  local selected = M.type(kind)
+  local choices = {}
   if not compact then
-    put(0, 'PostgreSQL  /  MongoDB  /  SQLite  /  Redis', 'PathfinderMuted')
-    put(1, 'Paste a connection URL or use a variable from .env.', 'PathfinderMuted')
+    local tabs = ''
+    for _, entry in ipairs(M.types) do
+      local label = entry.kind == selected.kind and '[ ' .. entry.name .. ' ]' or '  ' .. entry.name .. '  '
+      local start = #tabs + 2
+      tabs = tabs .. label .. ' '
+      choices[#choices + 1] = { start = start, finish = start + #label, kind = entry.kind }
+    end
+    put(0, tabs, 'PathfinderMuted')
+    for _, choice in ipairs(choices) do
+      if choice.kind == selected.kind then marks[#marks + 1] = { 0, 'PathfinderInputLabel', choice.start, choice.finish } end
+    end
+    put(1, 'Tab / Shift-Tab: database type   ·   Click a type to select', 'PathfinderMuted')
+  else
+    put(0, selected.name .. ' · Tab: type', 'PathfinderInputLabel')
   end
-  put(field_row + field_height + 2, compact and '.env: DATABASE_URL' or '.env example: DATABASE_URL   ·   Long URLs wrap automatically', 'PathfinderMuted')
+  put(field_row + field_height + 2, compact and '.env: DATABASE_URL' or '.env example: DATABASE_URL', 'PathfinderMuted')
   local status = error and (compact and '● Failed — retry' or '● Connection failed — correct the URL and retry')
     or loading and '◌ Connecting…' or (compact and '● Ready' or '● Ready to connect')
   put(status_row - 1, status,
@@ -62,12 +92,12 @@ function M.layout(columns, rows, value, error, loading)
   return {
     panel = { relative = 'editor', row = math.max(0, math.floor((rows - height - 2) / 2)),
       col = math.max(0, math.floor((columns - width - 2) / 2)), width = width, height = height,
-      style = 'minimal', border = 'rounded', zindex = 69, focusable = false,
+      style = 'minimal', border = 'rounded', zindex = 69, focusable = true,
       title = ' Connection ', title_pos = 'left', footer = footer, footer_pos = 'center' },
     field = { relative = 'win', row = field_row, col = math.min(2, math.max(0, width - 3)),
       width = inner, height = field_height, style = 'minimal', border = 'rounded', zindex = 70,
       title = width >= 30 and ' URL / .env variable ' or ' URL ', title_pos = 'left' },
-    lines = lines, marks = marks,
+    lines = lines, marks = marks, choices = choices,
   }
 end
 

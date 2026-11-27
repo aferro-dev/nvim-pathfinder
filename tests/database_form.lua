@@ -27,9 +27,32 @@ end
 local db = require('pathfinder.database')
 db.toggle({ root = vim.fn.getcwd() })
 local win, buf = api.nvim_get_current_win(), api.nvim_get_current_buf()
+local function text() return api.nvim_buf_get_lines(buf, 0, 1, false)[1] end
+local function key(name) vim.fn.maparg(name, 'i', false, true).callback() end
+assert(text() == form.types[1].default)
+key('<Tab>')
+assert(text() == form.types[2].default)
+key('<Tab>')
+assert(text() == form.types[3].default)
+api.nvim_buf_set_lines(buf, 0, -1, false, { 'sqlite://./custom.db' })
+key('<Tab>')
+assert(text() == form.types[4].default)
+key('<S-Tab>')
+assert(text() == 'sqlite://./custom.db') -- per-type draft survives switching
+key('<Tab>')
+key('<Tab>')
+assert(text() == form.types[1].default) -- cycle wraps
 local config = api.nvim_win_get_config(win)
 local parent = config.win
 assert(config.relative == 'win' and config.border ~= 'none')
+local original_mouse = vim.fn.getmousepos
+local choices = form.layout(vim.o.columns, vim.o.lines - vim.o.cmdheight, text(), nil, false).choices
+vim.fn.getmousepos = function() return { winid = parent, line = 1, column = choices[4].start + 1 } end
+key('<LeftMouse>')
+vim.fn.getmousepos = original_mouse
+assert(text() == form.types[4].default)
+assert(api.nvim_get_current_win() == win)
+
 assert(vim.wo[win].wrap and not vim.wo[win].cursorline)
 assert(vim.wo[win].winblend == 0 and vim.wo[parent].winblend == 0)
 local value = 'postgresql://localhost/db?' .. string.rep('x', 300)

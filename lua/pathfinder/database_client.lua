@@ -5,7 +5,7 @@ M.page_size = 50
 
 local function identifier(value) return '"' .. value:gsub('"', '""') .. '"' end
 
-function M.data_command(connection, tbl, page)
+function M.data_command(connection, tbl, page, filter)
   local offset = math.max(0, math.floor(page or 0)) * M.page_size
   local opts = { text = true, timeout = 15000 }
   if connection.kind == 'postgres' then
@@ -33,7 +33,7 @@ function M.data_command(connection, tbl, page)
     return { 'mongosh', '--quiet', '--norc', connection.url, '--eval', js }, opts
   elseif connection.kind == 'redis' then
     if vim.fn.executable('python3') ~= 1 then return nil, 'Redis support requires python3' end
-    opts.stdin = vim.json.encode({ url = connection.url })
+    opts.stdin = vim.json.encode({ url = connection.url, pattern = filter and filter.pattern or '*', kind = filter and filter.kind })
     return { 'python3', vim.fs.joinpath(scripts, 'redis_data.py'), 'data', tostring(M.page_size + 1), tostring(offset) }, opts
   elseif connection.kind == 'sqlite' then
     if vim.fn.executable('python3') ~= 1 then return nil, 'SQLite support requires python3' end
@@ -41,6 +41,12 @@ function M.data_command(connection, tbl, page)
       tostring(M.page_size + 1), tostring(offset) }, opts
   end
   return nil, 'Unsupported database'
+end
+
+function M.redis_command(connection, mode, payload)
+  payload.url = connection.url
+  return { 'python3', vim.fs.joinpath(scripts, 'redis_data.py'), mode },
+    { text = true, timeout = 15000, stdin = vim.json.encode(payload) }
 end
 
 function M.write_command(connection, tbl, original, replacement)

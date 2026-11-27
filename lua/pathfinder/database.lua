@@ -61,7 +61,17 @@ function M.parse_url(url, root)
     end
     return { kind = 'mongo', url = url }
   end
-  local path = url:match('^sqlite://(.+)$') or url:match('^sqlite:(.+)$')
+  -- Driver-qualified URLs follow SQLAlchemy: three slashes introduce a
+  -- relative path, four an absolute path. Keep existing plain sqlite URLs.
+  local driver = url:match('^sqlite%+([^:]+):')
+  local path
+  if driver then
+    if driver ~= 'aiosqlite' and driver ~= 'pysqlite' then return nil, 'Unsupported SQLite driver: ' .. clean(driver) end
+    path = url:match('^sqlite%+[^:]+:///(.+)$')
+    if not path then return nil, 'Use sqlite+' .. driver .. ':///relative.db or sqlite+' .. driver .. ':////absolute/path.db' end
+  else
+    path = url:match('^sqlite://(.+)$') or url:match('^sqlite:(.+)$')
+  end
   if path then
     if path:find('[?#]') then return nil, 'SQLite URLs accept a file path without query parameters' end
     path = path:gsub('%%(%x%x)', function(hex) return string.char(tonumber(hex, 16)) end)
@@ -171,6 +181,13 @@ function M.close()
   if api.nvim_win_is_valid(s.origin) then api.nvim_set_current_win(s.origin) end
 end
 
+local function open_redis()
+  if active_connection and active_connection.kind == 'redis' then
+    require('pathfinder.database_data').open({ connection = active_connection, tables = tables,
+      index = 1, label = selected_profile and selected_profile.name })
+  end
+end
+
 local function connect(value)
   local s = session
   local target = s.input and s.input.profile or selected_profile
@@ -238,6 +255,7 @@ local function connect(value)
       tables, connection, active_connection = schema, value, parsed
       dismiss_input(s)
       render()
+      open_redis()
     end)
   end)
   if ok then s.job = job else s.loading = false; fail('Could not start the database client') end
@@ -253,7 +271,11 @@ function M.prompt(opts)
   end
   if opts.new then s.error = nil end
   local form = require('pathfinder.database_form')
-  local value = opts.new and (s.new_draft or 'DATABASE_URL') or (selected_profile and selected_profile.draft) or s.draft or connection or 'DATABASE_URL'
+  local value
+  if opts.new then value = s.new_draft else value = (selected_profile and selected_profile.draft) or s.draft or connection end
+  local kind = (value and form.detect(value)) or (not opts.new and selected_profile and selected_profile.parsed.kind) or 'postgres'
+  value = value or form.type(kind).default
+  local drafts = {}
   local buf, panel_buf = api.nvim_create_buf(false, true), api.nvim_create_buf(false, true)
   for _, target in ipairs({ buf, panel_buf }) do
     vim.bo[target].bufhidden, vim.bo[target].swapfile = 'wipe', false
@@ -261,7 +283,7 @@ function M.prompt(opts)
   api.nvim_buf_set_lines(buf, 0, -1, false, { value })
   local function layout()
     local text = table.concat(api.nvim_buf_get_lines(buf, 0, -1, false), '')
-    return form.layout(vim.o.columns, vim.o.lines - vim.o.cmdheight, text, s.error, s.loading)
+    return form.layout(vim.o.columns, vim.o.lines - vim.o.cmdheight, text, s.error, s.loading, kind)
   end
   local geometry = layout()
   geometry.panel.title = opts.new and ' Add connection ' or selected_profile and ' Edit connection ' or ' Connect database '
@@ -271,6 +293,8 @@ function M.prompt(opts)
   local ns = api.nvim_create_namespace('pathfinder_database_form')
   local function refresh()
     if not api.nvim_win_is_valid(panel) or not api.nvim_win_is_valid(win) then return end
+    local text = table.concat(api.nvim_buf_get_lines(buf, 0, -1, false), '')
+    kind = form.detect(text) or kind
     local updated = layout()
     updated.panel.title = geometry.panel.title
     updated.field.win = panel
@@ -281,7 +305,7 @@ function M.prompt(opts)
     vim.bo[panel_buf].modifiable = false
     api.nvim_buf_clear_namespace(panel_buf, ns, 0, -1)
     for _, mark in ipairs(updated.marks) do
-      api.nvim_buf_set_extmark(panel_buf, ns, mark[1], 0, { line_hl_group = mark[2] })
+      api.nvim_buf_set_extmark(panel_buf, ns, mark[1], 0, mark[3] and { end_col = mark[4], hl_group = mark[2], priority = 150 } or { line_hl_group = mark[2] })
     end
     vim.wo[win].winhighlight = 'Normal:PathfinderInput,NormalFloat:PathfinderInput,FloatBorder:'
       .. (s.error and 'PathfinderInputError' or 'PathfinderInputBorder') .. ',FloatTitle:PathfinderInputLabel'
@@ -301,7 +325,46 @@ function M.prompt(opts)
   vim.wo[win].showbreak = '↪ '
   vim.wo[win].sidescrolloff = 0
   refresh()
-  local function cancel()
+  local function choose(next_kind)
+    if s.loading then return end
+    drafts[kind] = table.concat(api.nvim_buf_get_lines(buf, 0, -1, false), '')
+    kind = next_kind
+    local next_value = drafts[kind] or form.type(kind).default
+    api.nvim_buf_set_lines(buf, 0, -1, false, { next_value })
+    s.error = nil
+    refresh()
+    api.nvim_set_current_win(win)
+    api.nvim_win_set_cursor(win, { 1, #next_value })
+    vim.cmd('startinsert!')
+  end
+  local function cycle(delta)
+    local _, index = form.type(kind)
+    choose(form.types[(index - 1 + delta) % #form.types + 1].kind)
+  end
+  for _, target in ipairs({ buf, panel_buf }) do
+    vim.keymap.set({ 'n', 'i' }, '<Tab>', function() cycle(1) end, { buffer = target, silent = true })
+    vim.keymap.set({ 'n', 'i' }, '<S-Tab>', function() cycle(-1) end, { buffer = target, silent = true })
+  end
+  local function click_type()
+    local mouse = vim.fn.getmousepos()
+    if mouse.winid ~= panel then
+      api.nvim_feedkeys(api.nvim_replace_termcodes('<LeftMouse>', true, false, true), 'n', false)
+      return
+    end
+    if mouse.line == 1 then
+      local choices = layout().choices
+      if #choices == 0 then cycle(1); return end
+      for _, choice in ipairs(choices) do
+        if mouse.column - 1 >= choice.start and mouse.column - 1 < choice.finish then choose(choice.kind); return end
+      end
+    end
+    api.nvim_set_current_win(win)
+    vim.cmd('startinsert!')
+  end
+  for _, target in ipairs({ buf, panel_buf }) do
+    vim.keymap.set({ 'n', 'i' }, '<LeftMouse>', click_type, { buffer = target, silent = true })
+  end
+  local function cancel(stay)
     if session ~= s then return end
     local draft = table.concat(api.nvim_buf_get_lines(buf, 0, -1, false), '')
     if not opts.new and selected_profile then selected_profile.draft = draft elseif opts.new then s.new_draft = draft else s.draft = draft end
@@ -310,6 +373,7 @@ function M.prompt(opts)
     s.loading = false
     dismiss_input(s)
     render()
+    if not stay then open_redis() end
   end
   local function submit()
     if session ~= s or not s.input or s.input.buf ~= buf or s.loading then return end
@@ -318,17 +382,19 @@ function M.prompt(opts)
     if value == '' then s.error = 'Enter a database URL or a .env variable'; refresh(); return end
     connect(value)
   end
-  vim.keymap.set({ 'n', 'i' }, '<C-l>', function() cancel(); M.connections() end, { buffer = buf, silent = true })
+  vim.keymap.set({ 'n', 'i' }, '<C-l>', function() cancel(true); M.connections() end, { buffer = buf, silent = true })
   vim.keymap.set({ 'n', 'i' }, '<CR>', submit, { buffer = buf, silent = true, desc = 'Connect to database' })
   for _, key in ipairs({ '<Esc>', '<C-c>' }) do
     vim.keymap.set({ 'n', 'i' }, key, cancel, { buffer = buf, silent = true, nowait = true, desc = 'Cancel database connection' })
   end
+  vim.keymap.set('n', '<Esc>', cancel, { buffer = panel_buf, silent = true })
+  vim.keymap.set('n', '<CR>', submit, { buffer = panel_buf, silent = true })
   api.nvim_create_autocmd({ 'VimResized', 'TextChanged', 'TextChangedI' }, { buffer = buf, callback = function()
     if session == s and s.input and s.input.buf == buf then refresh() end
   end })
-  api.nvim_create_autocmd('WinLeave', { buffer = buf, once = true, callback = function()
+  api.nvim_create_autocmd('WinLeave', { buffer = buf, callback = function()
     vim.schedule(function()
-      if session == s and s.input and s.input.buf == buf then cancel() end
+      if session == s and s.input and s.input.buf == buf and api.nvim_get_current_win() ~= win and api.nvim_get_current_win() ~= panel then cancel(true) end
     end)
   end })
   api.nvim_create_autocmd('BufWipeout', { buffer = buf, once = true, callback = function()
@@ -375,7 +441,7 @@ function M.connections()
     api.nvim_win_set_cursor(win, { math.min(#lines, math.max(3, (index or 1) + 2)), 0 })
   end
   local function current() return profiles[api.nvim_win_get_cursor(win)[1] - 2] end
-  local function activate(profile)
+  local function activate(profile, editing)
     if not profile then return end
     require('pathfinder.database_data').close()
     selected_profile, projects[s.root].active = profile, profile
@@ -385,13 +451,14 @@ function M.connections()
     s.error, s.draft = nil, nil
     dismiss_input(s)
     render()
+    if not editing then open_redis() end
   end
   local function close() dismiss_input(s) end
   local actions = {
-    ['<Esc>'] = close, q = close,
+    ['<Esc>'] = function() close(); open_redis() end, q = function() close(); open_redis() end,
     ['<CR>'] = function() activate(current()) end,
     a = function() close(); M.prompt({ new = true }) end,
-    u = function() local profile = current(); if profile then activate(profile); M.prompt() end end,
+    u = function() local profile = current(); if profile then activate(profile, true); M.prompt() end end,
     r = function()
       local profile = current()
       if not profile then return end
@@ -564,7 +631,7 @@ function M.toggle(opts)
     end
   end })
   render()
-  if not connection then M.prompt() end
+  if not connection then M.prompt() else open_redis() end
 end
 
 return M

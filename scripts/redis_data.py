@@ -127,14 +127,16 @@ def record(client, key):
                 value=readable(value), truncated=truncated)
 
 
-def rows(client, limit, offset):
+def rows(client, limit, offset, pattern="*", kind=None):
     cursor, seen, result, skipped = b'0', set(), [], 0
     while True:
-        cursor, keys = client.call('SCAN', cursor, 'COUNT', 100)
+        cursor, keys = client.call('SCAN', cursor, 'MATCH', pattern, 'COUNT', 100)
         for key in keys:
             if key in seen:
                 continue
             seen.add(key)
+            if kind and client.call('TYPE', key).decode('ascii') != kind:
+                continue
             if skipped < offset:
                 skipped += 1
                 continue
@@ -163,7 +165,7 @@ def raw(value):
 
 def write(client, payload):
     original, replacement = payload['original'], payload.get('replacement')
-    if original.get('truncated') is not False:
+    if payload.get('action') != 'expiry' and original.get('truncated') is not False:
         raise ValueError('Redis partial previews cannot be edited or deleted')
     key = raw(original['key'])
     client.call('WATCH', key)
@@ -180,8 +182,13 @@ def write(client, payload):
                 replacement[field] != original[field] for field in original if field != 'value'):
             raise ValueError('Redis key and metadata cannot be changed; edit value only')
         value = raw(replacement['value'])
+    expiry = payload.get('ttl') if payload.get('action') == 'expiry' else None
+    if payload.get('action') == 'expiry' and (type(expiry) is not int or expiry < -1 or expiry == 0):
+        raise ValueError('Redis TTL must be a positive number of seconds, or -1 for no expiry')
     client.call('MULTI')
-    if replacement is None:
+    if expiry is not None:
+        client.call('PERSIST', key) if expiry == -1 else client.call('EXPIRE', key, expiry)
+    elif replacement is None:
         client.call('DEL', key)
     else:
         client.call('SET', key, value, 'KEEPTTL')
@@ -200,10 +207,14 @@ def main():
                        for name, kind in [('key', 'bytes'), ('type', 'string'), ('ttl', 'seconds'),
                                           ('size', 'integer'), ('value', 'preview'), ('truncated', 'boolean')]],
                            foreign_keys=[])]
+        elif sys.argv[1] == 'create':
+            if client.call('SET', raw(payload['key']), raw(payload['value']), 'NX') is None:
+                raise ValueError('Redis key already exists; choose another name')
+            result = {'ok': True}
         elif sys.argv[1] == 'write':
             result = write(client, payload)
         else:
-            result = rows(client, int(sys.argv[2]), int(sys.argv[3]))
+            result = rows(client, int(sys.argv[2]), int(sys.argv[3]), payload.get('pattern', '*'), payload.get('kind'))
         print(json.dumps(result, ensure_ascii=True))
     finally:
         client.close()

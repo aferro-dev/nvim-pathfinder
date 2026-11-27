@@ -43,7 +43,7 @@ Hidden files are visible by default; Git-ignored files are hidden, and `.git` is
 
 ## Database UML
 
-Press `D` in the file tree, or run `:PathfinderDatabase`. A centered modal opens with `DATABASE_URL` prefilled. Enter a connection URL or a variable from the project root's `.env` file; press Enter to connect or Esc to cancel. The connection panel has a bordered URL field that grows to show long URLs, with continuation arrows when wrapping. Instructions, connection status and errors occupy separate rows; the layout adapts to terminal size. Failed attempts keep your input editable: correct it and press Enter to retry. Esc cancels an active request; reopening the panel restores your last input:
+Press `D` in the file tree, or run `:PathfinderDatabase`. A centered modal opens with a database type selector and a default URL for the selected type. Click PostgreSQL, MongoDB, SQLite or Redis, or use Tab / Shift-Tab to change type. Each type keeps its edited URL while switching within the panel. Existing connections reopen with their type and URL selected. Enter a connection URL or a variable from the project root's `.env` file; press Enter to connect or Esc to cancel. The connection panel has a bordered URL field that grows to show long URLs, with continuation arrows when wrapping. Instructions, connection status and errors occupy separate rows; the layout adapts to terminal size. Failed attempts keep your input editable: correct it and press Enter to retry. Esc cancels an active request; reopening the panel restores your last input:
 
 ```text
 DATABASE_URL
@@ -51,6 +51,8 @@ $DATABASE_URL
 ${DATABASE_URL}
 sqlite:///absolute/path/database.db
 sqlite://relative/database.db
+sqlite+aiosqlite:///./knowledge.db
+sqlite+pysqlite:////absolute/path/database.db
 mongodb://localhost:27017/database
 mongodb+srv://user:password@cluster.example/database
 postgresql://user:password@localhost:5432/database
@@ -59,7 +61,7 @@ redis://localhost:6379/0
 rediss://default:password@redis.example:6380/0
 ```
 
-`.env` entries can use `export`, single or double quotes, and trailing comments. Values are read literally; shell commands and variable interpolation are not evaluated. Relative SQLite paths resolve from the project root. URL-encode special characters in URLs. SQLite requires an existing file and opens it read-only for browsing; PostgreSQL reads metadata in a read-only transaction. MongoDB URLs must name a database; the overview lists its accessible collections without inferring relationships.
+`.env` entries can use `export`, single or double quotes, and trailing comments. Values are read literally; shell commands and variable interpolation are not evaluated. Relative SQLite paths resolve from the project root. Driver-qualified `sqlite+aiosqlite` and `sqlite+pysqlite` URLs follow SQLAlchemy syntax: three slashes for relative paths, four for absolute paths. Pathfinder reads the file using Python’s built-in SQLite support; installing these drivers is unnecessary. Plain `sqlite://relative.db` and `sqlite:///absolute/path.db` retain their existing meaning. URL-encode special characters in URLs. SQLite requires an existing file and opens it read-only for browsing; PostgreSQL reads metadata in a read-only transaction. MongoDB URLs must name a database; the overview lists its accessible collections without inferring relationships.
 
 Press `c` to manage connections for the current project: Enter switches, `a` adds, `u` edits, `r` renames, and `dd` removes an entry from the list. The overview and data browser also accept `a` to add and `c` to open the list; Ctrl-L opens it from the URL field. Each successful connection has its own cached schema, selection, hidden tables and expansion state. Entries are retained per project for the current Neovim session, including when switching projects; URLs and passwords are never persisted by Pathfinder. Switching uses the cached map; `R` reconnects and refreshes it. Removing a connection does not modify the database.
 
@@ -91,9 +93,11 @@ The selected row and column are highlighted, with a stronger highlight on the ac
 
 Redis URLs accept `redis://` and verified TLS with `rediss://`, optional percent-encoded username/password, a port (default 6379), and a database number (default 0). Query parameters and fragments are rejected. Redis Cluster redirection, Sentinel, custom TLS certificates, and module-specific value previews are not supported. See the [Redis URL format](https://redis.io/docs/latest/develop/clients/connection-urls/).
 
-The Redis `Keys` card opens a grid with key, type, TTL in seconds (`-1` means no expiry), size, value and a truncation flag. Strings, hashes, lists, sets, sorted sets and streams have previews; binary keys/values use `{ "base64": "…" }` objects. Values are limited to 100 entries or 16 KiB per string. Keys are paged using [SCAN](https://redis.io/docs/latest/commands/scan/), without `KEYS`; pages are a live view and may shift when the database changes. Each page scans from the start to its offset, so deep pages can take longer and hit the client timeout.
+Redis opens directly in a key browser with key, type, TTL in seconds (`-1` means no expiry), size, value and a truncation flag. Strings, hashes, lists, sets, sorted sets and streams have previews; binary keys/values use `{ "base64": "…" }` objects. Values are limited to 100 entries or 16 KiB per string. Keys are paged using [SCAN](https://redis.io/docs/latest/commands/scan/), without `KEYS`; pages are a live view and may shift when the database changes. Each page scans from the start to its offset, so deep pages can take longer and hit the client timeout.
 
-Open a complete Redis string with Enter or `e`, change only `value`, and use `:w` to save. Redis 6+ is required for string updates, which preserve TTL with `KEEPTTL`. Use `dd` to delete a complete key of any supported type after confirmation. Writes use `WATCH` and a transaction to reject concurrent changes. Truncated previews cannot be edited or deleted; other value types have a read-only JSON preview. The Redis user needs permission for the read commands used by its value types and, for writes, `WATCH`, `MULTI`, `EXEC`, `SET` and `DEL`.
+In the Redis browser, `/` changes the key pattern (for example `user:*`), `t` filters by value type, and `[` / `]` change page. The active pattern and type remain visible above the grid. `n` creates a new string key and refuses to overwrite an existing key. `T` changes the selected key’s TTL in seconds; `-1` removes expiry. Enter opens its value. `c` opens connections, `a` adds a connection, and `q` / Esc returns to files. Redis connections open this browser immediately after connecting, switching connections or reopening Pathfinder Database.
+
+Open a complete Redis string with Enter or `e`, change only `value`, and use `:w` to save. Redis 6+ is required for string updates, which preserve TTL with `KEEPTTL`. Use `dd` to delete a complete key of any supported type after confirmation. Writes use `WATCH` and a transaction to reject concurrent changes. Truncated previews cannot be edited or deleted; other value types have a read-only JSON preview. The Redis user needs permission for the read commands used by its value types and, for writes, `WATCH`, `MULTI`, `EXEC`, `SET`, `DEL`, `EXPIRE` and `PERSIST`.
 
 ## File actions
 
